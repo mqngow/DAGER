@@ -65,3 +65,8 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+
+# Agents
+
+.agents/
+skills-lock.json
