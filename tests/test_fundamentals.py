@@ -1,4 +1,4 @@
-﻿"""Phase 3 tests for SEC XBRL parsing, Balance Sheet & Cash Flow ratios, Sentiment, and 6m–3y Evaluator."""
+"""Phase 3 tests for SEC XBRL parsing, Balance Sheet & Cash Flow ratios, Sentiment, and 6m–3y Evaluator."""
 
 from dager.core.evaluator import compute_valuation_breakdown, evaluate_company
 from dager.core.fundamentals import (
@@ -113,4 +113,58 @@ def test_end_to_end_company_evaluation(
     assert report.verdict in list(InvestmentVerdict)
     assert len(report.bull_case) >= 1
     assert "Apple Inc. (AAPL)" in report.thesis_summary
+
+
+# ==============================================================================
+# Phase 4 Tests: Relational Persistence & `get_or_evaluate` Cache Router
+# Verifies that `FilingRepo` stores statements/prices/sentiment and that
+# `EvaluationRepo.get_or_evaluate()` serves cache hits within TTL and triggers
+# the on-demand evaluator callback only on a cache miss.
+# ==============================================================================
+def test_storage_repositories_and_cache_router(
+    db_session,
+    mock_company_identity,
+    mock_sec_company_facts,
+    mock_market_snapshot,
+    sample_sentiment_docs,
+):
+    """Verify SQLite ORM persistence, cache-miss fallback, and S&P 500 cache hits."""
+    from dager.storage import EvaluationRepo, FilingRepo
+
+    financials = parse_company_financials(
+        company=mock_company_identity,
+        company_facts=mock_sec_company_facts,
+        market_snapshot=mock_market_snapshot,
+    )
+    sentiment = SentimentScorer(use_finbert=False).score_documents("AAPL", sample_sentiment_docs)
+
+    filing_repo = FilingRepo(db_session)
+    company_row = filing_repo.save_financials(financials)
+    filing_repo.save_sentiment(company_row.id, sentiment)
+    assert company_row.ticker == "AAPL"
+    assert len(company_row.financial_statements) == 2
+
+    eval_repo = EvaluationRepo(db_session)
+    call_counter = {"count": 0}
+
+    def _mock_on_demand_evaluator(query: str):
+        call_counter["count"] += 1
+        return evaluate_company(financials, sentiment=sentiment)
+
+    # 1. First lookup: Cache Miss -> triggers `_mock_on_demand_evaluator` (`was_cached=False`)
+    first_report = eval_repo.get_or_evaluate("AAPL", _mock_on_demand_evaluator)
+    assert first_report.was_cached is False
+    assert call_counter["count"] == 1
+
+    # 2. Second lookup (by company name!): Cache Hit -> served from DB without re-running evaluator (`was_cached=True`)
+    second_report = eval_repo.get_or_evaluate("Apple Inc", _mock_on_demand_evaluator)
+    assert second_report.was_cached is True
+    assert second_report.ticker == "AAPL"
+    assert call_counter["count"] == 1
+
+    # 3. Leaderboard query returns ranked S&P 500 evaluations
+    top_sp500 = eval_repo.list_top_evaluations(sp500_only=True)
+    assert len(top_sp500) == 1
+    assert top_sp500[0].ticker == "AAPL"
+
 

@@ -1,10 +1,24 @@
-﻿"""Shared Pytest fixtures (mock SEC `companyfacts` JSON, sample news feeds, and company identity)."""
+"""Shared Pytest fixtures (mock SEC `companyfacts` JSON, sample news feeds, and company identity)."""
 
 from datetime import datetime, timezone
 import pytest
 
 from dager.schemas.filings import CompanyIdentity, MarketPriceSnapshot
 from dager.schemas.sentiment import SentimentDocument, SentimentSourceType
+from dager.storage import get_engine, init_db, session_scope
+
+
+# ==============================================================================
+# In-Memory SQLite Database Fixture (Phase 4 Persistence Tests)
+# Creates an isolated in-memory relational database for each test function.
+# ==============================================================================
+@pytest.fixture
+def db_session():
+    """Yield a clean SQLAlchemy Session backed by an in-memory SQLite database."""
+    engine = get_engine("sqlite:///:memory:")
+    init_db(engine)
+    with session_scope(engine) as session:
+        yield session
 
 
 # ==============================================================================

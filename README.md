@@ -162,8 +162,8 @@ DAGER produces an investment verdict (**Strong Buy / Buy / Hold / Avoid**) and a
 - [x] **`dager/core/evaluator/`**: Combine balance sheet health, price valuation (`valuation.py`), and sentiment into a 6-month to 3-year investment score and human-readable thesis (`ranker.py`).
 
 ### Phase 4: Persistence Layer (S&P 500 Store & Cache Lookup)
-- [ ] **`dager/storage/db.py` & `models.py`**: Configure SQLAlchemy engine/sessions and tables for `Company`, `FinancialStatement`, `StockPrice`, `SentimentRecord`, and `EvaluationResult`.
-- [ ] **`dager/storage/repositories.py`**: Implement `get_or_evaluate(query: str)` cache-check pattern—returning stored S&P 500 data when fresh, or flagging a cache miss for on-demand execution.
+- [x] **`dager/storage/db.py` & `models.py`**: Configure SQLAlchemy engine/sessions and tables for `Company`, `FinancialStatement`, `StockPrice`, `SentimentRecord`, and `EvaluationResult`.
+- [x] **`dager/storage/repositories.py`**: Implement `get_or_evaluate(query: str)` cache-check pattern—returning stored S&P 500 data when fresh, or flagging a cache miss for on-demand execution.
 
 ### Phase 5: Prefect Tasks & Daily / On-Demand Flows
 - [ ] **`dager/pipeline/`**: Wrap collectors, core calculators, and repository writes into idempotent Prefect tasks (`tasks_fundamentals.py`, `tasks_sentiment.py`, `tasks_evaluation.py`).
