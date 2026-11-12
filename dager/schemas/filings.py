@@ -1,6 +1,6 @@
 """Raw & normalized 10-K / 10-Q financial statement and market price schemas."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -161,15 +161,21 @@ class MarketPriceSnapshot(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     ticker: str = Field(..., description="Stock ticker symbol.")
-    as_of: datetime = Field(default_factory=datetime.utcnow, description="Timestamp of price quote.")
+    as_of: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Timestamp of price quote.",
+    )
     current_price: float = Field(..., gt=0, description="Latest share price in USD.")
     market_cap: Optional[float] = Field(default=None, gt=0, description="Total market capitalization in USD.")
     enterprise_value: Optional[float] = Field(default=None, description="Market cap plus net debt.")
     high_52w: Optional[float] = Field(default=None, gt=0, description="52-week high price.")
     low_52w: Optional[float] = Field(default=None, gt=0, description="52-week low price.")
+    price_return_1m: Optional[float] = Field(default=None, description="Trailing 1-month price return (decimal).")
+    price_return_3m: Optional[float] = Field(default=None, description="Trailing 3-month price return (decimal).")
     price_return_6m: Optional[float] = Field(default=None, description="Trailing 6-month price return (decimal, e.g., 0.12 = +12%).")
     price_return_1y: Optional[float] = Field(default=None, description="Trailing 1-year price return (decimal).")
     price_return_3y: Optional[float] = Field(default=None, description="Trailing 3-year price return (decimal).")
+    price_return_5y: Optional[float] = Field(default=None, description="Trailing 5-year price return (decimal).")
 
 
 # ==============================================================================

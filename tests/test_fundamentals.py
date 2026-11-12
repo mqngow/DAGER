@@ -111,6 +111,11 @@ def test_end_to_end_company_evaluation(
     assert report.ticker == "AAPL"
     assert 0.0 <= report.composite_score <= 100.0
     assert report.verdict in list(InvestmentVerdict)
+    assert set(report.horizon_signals.keys()) == {"1m", "3m", "6m", "1y", "3y", "5y"}
+    for h_key, h_sig in report.horizon_signals.items():
+        assert h_sig.horizon == h_key
+        assert 0.0 <= h_sig.score <= 100.0
+        assert h_sig.verdict in list(InvestmentVerdict)
     assert len(report.bull_case) >= 1
     assert "Apple Inc. (AAPL)" in report.thesis_summary
 

@@ -92,9 +92,12 @@ class MarketClient:
             enterprise_value=float(info["enterpriseValue"]) if info.get("enterpriseValue") else None,
             high_52w=float(high_52w) if high_52w else None,
             low_52w=float(low_52w) if low_52w else None,
+            price_return_1m=self._compute_period_return(closes, 21),    # ~1 month (21 trading days)
+            price_return_3m=self._compute_period_return(closes, 63),    # ~3 months (63 trading days)
             price_return_6m=self._compute_period_return(closes, 126),   # ~6 months (126 trading days)
             price_return_1y=self._compute_period_return(closes, 252),   # ~1 year (252 trading days)
             price_return_3y=self._compute_period_return(closes, 756),   # ~3 years (756 trading days)
+            price_return_5y=self._compute_period_return(closes, min(len(closes) - 1, 1255)) if len(closes) > 1000 else None,
         )
 
     # ==========================================================================

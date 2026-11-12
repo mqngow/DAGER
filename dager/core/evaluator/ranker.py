@@ -1,33 +1,44 @@
-﻿"""Multi-factor composite scoring (Fundamentals + Valuation + Sentiment) and 6m–3y thesis generator."""
+﻿"""Multi-factor composite scoring and multi-horizon (1m, 3m, 6m, 1y, 3y, 5y) thesis generator."""
 
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
 from dager.core.evaluator.valuation import compute_valuation_breakdown
 from dager.core.fundamentals.ratios import compute_fundamental_breakdown
 from dager.schemas.evaluation import (
     FundamentalBreakdown,
+    HorizonSignal,
     InvestmentHorizon,
     InvestmentVerdict,
     StockEvaluationReport,
     ValuationBreakdown,
 )
-from dager.schemas.filings import CompanyFinancials
+from dager.schemas.filings import CompanyFinancials, MarketPriceSnapshot
 from dager.schemas.sentiment import CompanySentimentSummary
 
 
 # ==============================================================================
-# Pillar Weight Constants & Verdict Thresholds
-# Gives primary weight (50%) to SEC Balance Sheet & Fundamental Strength,
-# 30% to Valuation & Margin of Safety, and 20% to News/Transcript Sentiment.
+# Pillar Weight Constants & Multi-Horizon Weight Matrix
+# Shifts emphasis from News Sentiment & Price Momentum in short horizons (`1m`,
+# `3m`) to Balance Sheet Solvency, ROIC & DCF Valuation in long horizons (`1y`,
+# `3y`, `5y`) — requiring zero extra external API calls.
 # ==============================================================================
 FUNDAMENTALS_WEIGHT = 0.50
 VALUATION_WEIGHT = 0.30
 SENTIMENT_WEIGHT = 0.20
 
+HORIZON_WEIGHT_PROFILES: Dict[str, tuple[float, float, float, str]] = {
+    "1m": (0.20, 0.25, 0.55, "Driven by FinBERT news catalysts, 1-month price momentum, and near-term liquidity."),
+    "3m": (0.30, 0.30, 0.40, "Driven by quarterly earnings narrative, 3-month trend, and working capital health."),
+    "6m": (0.40, 0.35, 0.25, "Balanced across balance sheet strength, valuation re-rating, and sentiment trend."),
+    "1y": (0.50, 0.35, 0.15, "Anchored on annual Free Cash Flow generation, ROIC, and fair-value convergence."),
+    "3y": (0.65, 0.30, 0.05, "Anchored on multi-year ROIC compounding, debt solvency, and DCF intrinsic value."),
+    "5y": (0.75, 0.20, 0.05, "Anchored on secular balance sheet durability, capital allocation, and long-term compounding."),
+}
+
 
 def classify_verdict(composite_score: float, balance_sheet_score: float) -> InvestmentVerdict:
     """Map composite 0–100 score to a discrete recommendation tier with a balance-sheet safety gate."""
-    # Safety gate: never issue Strong Buy if balance sheet health is distressed (< 40)
+    # Safety gate: never issue Strong Buy if balance sheet health is distressed (< 45)
     if composite_score >= 75.0 and balance_sheet_score >= 45.0:
         return InvestmentVerdict.STRONG_BUY
     if composite_score >= 60.0 and balance_sheet_score >= 35.0:
@@ -35,6 +46,76 @@ def classify_verdict(composite_score: float, balance_sheet_score: float) -> Inve
     if composite_score >= 45.0:
         return InvestmentVerdict.HOLD
     return InvestmentVerdict.AVOID
+
+
+# ==============================================================================
+# Multi-Horizon Signal Calculator (`1m`, `3m`, `6m`, `1y`, `3y`, `5y`)
+# Blends FinBERT sentiment with trailing price momentum for short-term windows
+# and progressively transitions to ROIC, FCF, and balance sheet durability for
+# multi-year holding periods.
+# ==============================================================================
+def _momentum_adjusted_sentiment(
+    base_sentiment: float,
+    snapshot: Optional[MarketPriceSnapshot],
+    horizon: str,
+) -> float:
+    """Blend FinBERT sentiment (0–100) with trailing price return momentum for `1m`–`6m` windows."""
+    if snapshot is None:
+        return base_sentiment
+
+    ret_map = {
+        "1m": snapshot.price_return_1m if snapshot.price_return_1m is not None else snapshot.price_return_6m,
+        "3m": snapshot.price_return_3m if snapshot.price_return_3m is not None else snapshot.price_return_6m,
+        "6m": snapshot.price_return_6m,
+        "1y": snapshot.price_return_1y,
+        "3y": snapshot.price_return_3y,
+        "5y": snapshot.price_return_5y if snapshot.price_return_5y is not None else snapshot.price_return_3y,
+    }
+    ret = ret_map.get(horizon)
+    if ret is None:
+        return base_sentiment
+
+    # Map trailing return into a [20, 80] momentum sub-score centered at 50
+    momentum_score = max(20.0, min(80.0, 50.0 + (ret * 100.0)))
+    if horizon in ("1m", "3m"):
+        return round(0.65 * base_sentiment + 0.35 * momentum_score, 2)
+    return round(0.80 * base_sentiment + 0.20 * momentum_score, 2)
+
+
+def compute_horizon_signals(
+    fundamentals: FundamentalBreakdown,
+    valuation: ValuationBreakdown,
+    sentiment_score: float,
+    snapshot: Optional[MarketPriceSnapshot] = None,
+) -> Dict[str, HorizonSignal]:
+    """Compute tailored scores and Buy/Hold/Avoid verdicts across `1m`, `3m`, `6m`, `1y`, `3y`, and `5y`."""
+    signals: Dict[str, HorizonSignal] = {}
+
+    for horizon_key, (w_fund, w_val, w_sent, summary_text) in HORIZON_WEIGHT_PROFILES.items():
+        # Long horizons (3y, 5y) emphasize balance sheet solvency & ROIC durability even further
+        if horizon_key == "5y":
+            eff_fund = 0.60 * fundamentals.balance_sheet_score + 0.40 * fundamentals.profitability_score
+        else:
+            eff_fund = fundamentals.pillar_score
+
+        eff_sent = _momentum_adjusted_sentiment(sentiment_score, snapshot, horizon_key)
+        score = round(
+            max(0.0, min(100.0, (w_fund * eff_fund) + (w_val * valuation.pillar_score) + (w_sent * eff_sent))),
+            2,
+        )
+        verdict = classify_verdict(score, fundamentals.balance_sheet_score)
+
+        signals[horizon_key] = HorizonSignal(
+            horizon=horizon_key,
+            score=score,
+            verdict=verdict,
+            fundamentals_weight=w_fund,
+            valuation_weight=w_val,
+            sentiment_momentum_weight=w_sent,
+            driver_summary=summary_text,
+        )
+
+    return signals
 
 
 # ==============================================================================
@@ -147,6 +228,12 @@ def evaluate_company(
         2,
     )
     verdict = classify_verdict(composite_score, fundamentals.balance_sheet_score)
+    horizon_signals = compute_horizon_signals(
+        fundamentals=fundamentals,
+        valuation=valuation,
+        sentiment_score=sentiment_score,
+        snapshot=financials.market_snapshot,
+    )
 
     bull_case, bear_case, thesis_summary = _build_thesis(
         company_name=financials.company.company_name,
@@ -168,6 +255,7 @@ def evaluate_company(
         horizon=InvestmentHorizon.SIX_MONTHS_TO_THREE_YEARS,
         composite_score=composite_score,
         verdict=verdict,
+        horizon_signals=horizon_signals,
         fundamentals=fundamentals,
         valuation=valuation,
         sentiment_score=sentiment_score,

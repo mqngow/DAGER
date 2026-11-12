@@ -1,14 +1,15 @@
-"""Final 6-month to 3-year stock evaluation & recommendation output schema."""
+"""Final multi-horizon (1m, 3m, 6m, 1y, 3y, 5y) stock evaluation & recommendation output schema."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
 # ==============================================================================
-# Investment Verdict & Horizon Enumerations
-# Defines the discrete decision tiers and target holding horizon produced by DAGER.
+# Investment Verdict & Multi-Horizon Enumerations
+# Defines discrete decision tiers (`Strong Buy`, `Buy`, `Hold`, `Avoid`) and
+# supported time horizons from 1 month through 5 years.
 # ==============================================================================
 class InvestmentVerdict(str, Enum):
     STRONG_BUY = "Strong Buy"
@@ -18,7 +19,30 @@ class InvestmentVerdict(str, Enum):
 
 
 class InvestmentHorizon(str, Enum):
+    ONE_MONTH = "1m"
+    THREE_MONTHS = "3m"
+    SIX_MONTHS = "6m"
+    ONE_YEAR = "1y"
+    THREE_YEARS = "3y"
+    FIVE_YEARS = "5y"
     SIX_MONTHS_TO_THREE_YEARS = "6m-3y"
+
+
+# ==============================================================================
+# Per-Horizon Verdict & Score Breakdown (`1m`, `3m`, `6m`, `1y`, `3y`, `5y`)
+# Captures the tailored composite score, Buy/Hold/Avoid verdict, pillar weight
+# allocation, and primary driver explanation for a specific holding period.
+# ==============================================================================
+class HorizonSignal(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    horizon: str = Field(..., description="Target holding window ('1m', '3m', '6m', '1y', '3y', '5y').")
+    score: float = Field(..., ge=0.0, le=100.0, description="Horizon-specific composite score (0–100).")
+    verdict: InvestmentVerdict = Field(..., description="Recommendation tier for this holding horizon.")
+    fundamentals_weight: float = Field(..., ge=0.0, le=1.0, description="Weight assigned to Balance Sheet, ROIC & FCF.")
+    valuation_weight: float = Field(..., ge=0.0, le=1.0, description="Weight assigned to DCF & multiple valuation.")
+    sentiment_momentum_weight: float = Field(..., ge=0.0, le=1.0, description="Weight assigned to FinBERT sentiment & price momentum.")
+    driver_summary: str = Field(..., description="Concise explanation of what drives the verdict over this timeframe.")
 
 
 # ==============================================================================
@@ -89,13 +113,16 @@ class StockEvaluationReport(BaseModel):
     company_name: str = Field(..., description="Official company name.")
     is_sp500: bool = Field(default=False, description="Whether company is in the pre-computed S&P 500 store.")
     was_cached: bool = Field(default=False, description="True if served from fresh DB cache; False if computed on-demand.")
-    evaluated_at: datetime = Field(default_factory=datetime.utcnow, description="UTC timestamp of evaluation.")
+    evaluated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="UTC timestamp of evaluation.",
+    )
     horizon: InvestmentHorizon = Field(
         default=InvestmentHorizon.SIX_MONTHS_TO_THREE_YEARS,
-        description="Target investment holding horizon (6m–3y).",
+        description="Primary headline holding horizon (6m–3y).",
     )
 
-    # --- Composite Verdict & Score ---
+    # --- Headline Composite Verdict & Multi-Horizon Signals (1m, 3m, 6m, 1y, 3y, 5y) ---
     composite_score: float = Field(
         ...,
         ge=0.0,
@@ -103,6 +130,10 @@ class StockEvaluationReport(BaseModel):
         description="Weighted multi-factor composite score (0–100).",
     )
     verdict: InvestmentVerdict = Field(..., description="Actionable recommendation tier.")
+    horizon_signals: Dict[str, HorizonSignal] = Field(
+        default_factory=dict,
+        description="Horizon-specific scores and verdicts keyed by '1m', '3m', '6m', '1y', '3y', and '5y'.",
+    )
 
     # --- Three-Pillar Breakdowns ---
     fundamentals: FundamentalBreakdown = Field(..., description="Pillar 1: Balance sheet, cash flow & ROIC breakdown.")

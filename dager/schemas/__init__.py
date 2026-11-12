@@ -2,6 +2,7 @@
 
 from dager.schemas.evaluation import (
     FundamentalBreakdown,
+    HorizonSignal,
     InvestmentHorizon,
     InvestmentVerdict,
     StockEvaluationReport,
@@ -42,6 +43,7 @@ __all__ = [
     # Evaluation Schemas
     "InvestmentVerdict",
     "InvestmentHorizon",
+    "HorizonSignal",
     "FundamentalBreakdown",
     "ValuationBreakdown",
     "StockEvaluationReport",

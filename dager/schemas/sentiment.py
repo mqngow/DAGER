@@ -1,6 +1,6 @@
 """Structured news article, transcript, and FinBERT sentiment score models."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
@@ -68,7 +68,10 @@ class CompanySentimentSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     ticker: str = Field(..., description="Company stock ticker.")
-    evaluated_at: datetime = Field(default_factory=datetime.utcnow, description="Aggregation timestamp.")
+    evaluated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Aggregation timestamp.",
+    )
     document_count: int = Field(default=0, ge=0, description="Total number of documents analyzed.")
 
     # --- Weighted Sentiment Metrics ---
