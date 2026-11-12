@@ -430,7 +430,7 @@
         `SEC CIK: ${rep.cik} · ${rep.was_cached ? "Cached DB Record" : "Computed On-Demand"} · Evaluated: ${new Date(rep.evaluated_at).toLocaleString()}`;
 
       const vBadge = document.getElementById("rep-verdict");
-      vBadge.textContent = `${rep.verdict} (6m–3y)`;
+      vBadge.textContent = `${rep.verdict} (1m–5y)`;
       vBadge.className = `badge ${verdictClass(rep.verdict)}`;
       document.getElementById("rep-score").textContent = `${rep.composite_score.toFixed(1)} / 100`;
       document.getElementById("rep-summary").textContent = rep.thesis_summary;
