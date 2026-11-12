@@ -25,10 +25,18 @@ _engine: Optional[Engine] = None
 _SessionLocal: Optional[sessionmaker[Session]] = None
 
 
+def _normalize_db_url(raw_url: str) -> str:
+    """Normalize `postgres://` URIs (from Supabase/Heroku) into SQLAlchemy `postgresql://` format."""
+    url = raw_url.strip()
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://") :]
+    return url
+
+
 def get_engine(database_url: Optional[str] = None) -> Engine:
     """Create or return the singleton SQLAlchemy Engine for the configured database URI."""
     global _engine
-    url = database_url or settings.database_url
+    url = _normalize_db_url(database_url or settings.database_url)
 
     if database_url is not None:
         connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}

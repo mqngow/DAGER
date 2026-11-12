@@ -27,8 +27,9 @@ dependencies = [
     "pydantic-settings>=2.2.1",
     # Market Price & Financial Data
     "yfinance>=0.2.40",
-    # Relational Database & ORM (PostgreSQL / SQLite)
+    # Relational Database & ORM (PostgreSQL / Supabase / SQLite)
     "sqlalchemy>=2.0.30",
+    "psycopg2-binary>=2.9.9",
     # Workflow Orchestration (Daily S&P 500 & On-Demand Flows)
     "prefect>=2.19.0",
     # Web API & Server
