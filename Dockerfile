@@ -1,30 +1,35 @@
 ﻿# ==============================================================================
 # Base Runtime Image
-# Lightweight Python 3.12 container for running DAGER Prefect flows or FastAPI.
+# Lightweight Python 3.12 container configured for Hugging Face Spaces (port 7860)
+# and cloud container deployments.
 # ==============================================================================
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# Prevent Python from writing .pyc files and buffer stdout/stderr
+# Prevent Python from writing .pyc files, buffer logs, and point writable caches
+# to `/tmp` so non-root cloud containers (like Hugging Face Spaces) never hit permission errors.
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PREFECT_HOME=/tmp/.prefect \
+    HF_HOME=/tmp/.cache/huggingface
 
 # ==============================================================================
 # Dependency Installation
-# Installs core DAGER dependencies first to leverage Docker layer caching.
+# Copies package files and installs DAGER + runtime dependencies.
 # ==============================================================================
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md main.py ./
 COPY dager ./dager
 COPY flows ./flows
 
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e .
+    pip install --no-cache-dir -e . && \
+    mkdir -p /app/logs && chmod -R 777 /app/logs
 
 # ==============================================================================
-# Default Entrypoint
-# Runs the daily S&P 500 evaluation batch or serves the Prefect deployment.
-# Override CMD in cloud platforms (e.g., `uvicorn dager.web.api:app --host 0.0.0.0 --port 8000`).
+# Default Web Entrypoint (Hugging Face Spaces uses port 7860)
 # ==============================================================================
-CMD ["python", "-m", "flows.evaluation_flow", "--limit", "50"]
+EXPOSE 7860
+
+CMD ["uvicorn", "dager.web.api:app", "--host", "0.0.0.0", "--port", "7860"]
 
