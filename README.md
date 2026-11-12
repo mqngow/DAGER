@@ -166,8 +166,8 @@ DAGER produces an investment verdict (**Strong Buy / Buy / Hold / Avoid**) and a
 - [x] **`dager/storage/repositories.py`**: Implement `get_or_evaluate(query: str)` cache-check pattern—returning stored S&P 500 data when fresh, or flagging a cache miss for on-demand execution.
 
 ### Phase 5: Prefect Tasks & Daily / On-Demand Flows
-- [ ] **`dager/pipeline/`**: Wrap collectors, core calculators, and repository writes into idempotent Prefect tasks (`tasks_fundamentals.py`, `tasks_sentiment.py`, `tasks_evaluation.py`).
-- [ ] **`flows/`**:
+- [x] **`dager/pipeline/`**: Wrap collectors, core calculators, and repository writes into idempotent Prefect tasks (`tasks_fundamentals.py`, `tasks_sentiment.py`, `tasks_evaluation.py`).
+- [x] **`flows/`**:
   - **Daily S&P 500 Batch Flow**: Scheduled daily run of `fundamentals_flow.py`, `sentiment_flow.py`, and `evaluation_flow.py` across the S&P 500 universe.
   - **On-Demand Single-Company Flow**: Triggered when a user queries a non-cached or stale company ticker/name; pulls EDGAR balance sheets, news, and stock prices live, evaluates the 6m–3y outlook, persists results, and returns the report.
 
