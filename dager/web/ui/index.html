@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -22,7 +23,13 @@
       --hold: #f59e0b;
       --avoid: #ef4444;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background: var(--bg);
@@ -30,7 +37,11 @@
       line-height: 1.5;
       padding: 24px;
     }
-    .container { max-width: 1240px; margin: 0 auto; }
+
+    .container {
+      max-width: 1240px;
+      margin: 0 auto;
+    }
 
     /* ==========================================================================
        Header & On-Demand Ticker / Company Search Bar
@@ -45,9 +56,25 @@
       border-bottom: 1px solid var(--border);
       margin-bottom: 24px;
     }
-    .brand h1 { font-size: 1.75rem; letter-spacing: 0.5px; color: #fff; }
-    .brand p { color: var(--muted); font-size: 0.9rem; }
-    .search-box { display: flex; gap: 8px; flex: 1; max-width: 520px; }
+
+    .brand h1 {
+      font-size: 1.75rem;
+      letter-spacing: 0.5px;
+      color: #fff;
+    }
+
+    .brand p {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .search-box {
+      display: flex;
+      gap: 8px;
+      flex: 1;
+      max-width: 520px;
+    }
+
     .search-box input {
       flex: 1;
       padding: 10px 14px;
@@ -57,6 +84,7 @@
       color: #fff;
       font-size: 0.95rem;
     }
+
     button {
       padding: 10px 16px;
       border-radius: 8px;
@@ -67,7 +95,11 @@
       cursor: pointer;
       transition: opacity 0.15s;
     }
-    button:hover { opacity: 0.9; }
+
+    button:hover {
+      opacity: 0.9;
+    }
+
     button.secondary {
       background: var(--panel-alt);
       color: var(--text);
@@ -84,6 +116,7 @@
       padding: 20px;
       margin-bottom: 20px;
     }
+
     .card-title {
       font-size: 1rem;
       font-weight: 600;
@@ -92,6 +125,7 @@
       text-transform: uppercase;
       letter-spacing: 0.6px;
     }
+
     .badge {
       display: inline-block;
       padding: 4px 10px;
@@ -99,51 +133,147 @@
       font-size: 0.8rem;
       font-weight: 700;
     }
-    .v-strong-buy { background: rgba(16, 185, 129, 0.2); color: var(--strong-buy); border: 1px solid var(--strong-buy); }
-    .v-buy        { background: rgba(52, 211, 153, 0.18); color: var(--buy); border: 1px solid var(--buy); }
-    .v-hold       { background: rgba(245, 158, 11, 0.18); color: var(--hold); border: 1px solid var(--hold); }
-    .v-avoid      { background: rgba(239, 68, 68, 0.18); color: var(--avoid); border: 1px solid var(--avoid); }
+
+    .v-strong-buy {
+      background: rgba(16, 185, 129, 0.2);
+      color: var(--strong-buy);
+      border: 1px solid var(--strong-buy);
+    }
+
+    .v-buy {
+      background: rgba(52, 211, 153, 0.18);
+      color: var(--buy);
+      border: 1px solid var(--buy);
+    }
+
+    .v-hold {
+      background: rgba(245, 158, 11, 0.18);
+      color: var(--hold);
+      border: 1px solid var(--hold);
+    }
+
+    .v-avoid {
+      background: rgba(239, 68, 68, 0.18);
+      color: var(--avoid);
+      border: 1px solid var(--avoid);
+    }
 
     .horizon-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
       gap: 12px;
     }
+
     .horizon-card {
       background: var(--panel-alt);
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 14px;
     }
-    .horizon-card .h-label { font-size: 0.85rem; color: var(--muted); font-weight: 600; }
-    .horizon-card .h-score { font-size: 1.5rem; font-weight: 700; margin: 6px 0; }
-    .horizon-card .h-weights { font-size: 0.72rem; color: var(--muted); margin-top: 8px; }
-    .horizon-card .h-desc { font-size: 0.78rem; color: var(--text); margin-top: 6px; }
+
+    .horizon-card .h-label {
+      font-size: 0.85rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .horizon-card .h-score {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin: 6px 0;
+    }
+
+    .horizon-card .h-weights {
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    .horizon-card .h-desc {
+      font-size: 0.78rem;
+      color: var(--text);
+      margin-top: 6px;
+    }
 
     /* ==========================================================================
        Metrics Grid & Leaderboard Table
        ========================================================================== */
-    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; }
-    .metric-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 20px;
+    }
+
+    .metric-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
     .metric-item {
       background: var(--panel-alt);
       padding: 10px 12px;
       border-radius: 8px;
       border: 1px solid var(--border);
     }
-    .metric-item span { display: block; font-size: 0.76rem; color: var(--muted); }
-    .metric-item strong { font-size: 1.05rem; color: #fff; }
-    ul.thesis-list { padding-left: 18px; }
-    ul.thesis-list li { margin-bottom: 6px; font-size: 0.92rem; }
 
-    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
-    th { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; }
-    tr.clickable:hover { background: var(--panel-alt); cursor: pointer; }
-    #status-banner { color: var(--accent); margin-bottom: 14px; font-size: 0.92rem; min-height: 22px; }
-    .hidden { display: none; }
+    .metric-item span {
+      display: block;
+      font-size: 0.76rem;
+      color: var(--muted);
+    }
+
+    .metric-item strong {
+      font-size: 1.05rem;
+      color: #fff;
+    }
+
+    ul.thesis-list {
+      padding-left: 18px;
+    }
+
+    ul.thesis-list li {
+      margin-bottom: 6px;
+      font-size: 0.92rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+    }
+
+    tr.clickable:hover {
+      background: var(--panel-alt);
+      cursor: pointer;
+    }
+
+    #status-banner {
+      color: var(--accent);
+      margin-bottom: 14px;
+      font-size: 0.92rem;
+      min-height: 22px;
+    }
+
+    .hidden {
+      display: none;
+    }
   </style>
 </head>
+
 <body>
   <div class="container">
     <!-- Top Header & On-Demand Ticker/Company Search -->
@@ -153,9 +283,11 @@
         <p>SEC EDGAR Balance Sheet + FinBERT Sentiment + Valuation Engine (1m · 3m · 6m · 1y · 3y · 5y)</p>
       </div>
       <div class="search-box">
-        <input id="query-input" type="text" placeholder="Search ticker or company name (e.g. AAPL, Microsoft, NVDA)..." />
+        <input id="query-input" type="text"
+          placeholder="Search ticker or company name (e.g. AAPL, Microsoft, NVDA)..." />
         <button onclick="runEvaluation(false)">Analyze</button>
-        <button class="secondary" onclick="runEvaluation(true)" title="Bypass DB cache and pull fresh SEC/market data">Refresh</button>
+        <button class="secondary" onclick="runEvaluation(true)"
+          title="Bypass DB cache and pull fresh SEC/market data">Refresh</button>
       </div>
     </header>
 
@@ -179,7 +311,7 @@
 
       <!-- Multi-Horizon Verdict Strip (1m, 3m, 6m, 1y, 3y, 5y) -->
       <div class="card">
-        <div class="card-title">Multi-Horizon Signals (1m · 3m · 6m · 1y · 3y · 5y — Zero Extra API Calls)</div>
+        <div class="card-title">Multi-Horizon Signals (1m · 3m · 6m · 1y · 3y · 5y)</div>
         <div id="horizon-grid" class="horizon-grid"></div>
       </div>
 
@@ -231,7 +363,9 @@
           </tr>
         </thead>
         <tbody id="leaderboard-body">
-          <tr><td colspan="11" style="color:var(--muted);">Loading stored evaluations...</td></tr>
+          <tr>
+            <td colspan="11" style="color:var(--muted);">Loading stored evaluations...</td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -318,7 +452,7 @@
           </div>
           <div class="h-score">${sig.score.toFixed(1)}<span style="font-size:0.85rem; color:var(--muted);">/100</span></div>
           <div class="h-desc">${sig.driver_summary}</div>
-          <div class="h-weights">Weights: ${Math.round(sig.fundamentals_weight*100)}% Fund · ${Math.round(sig.valuation_weight*100)}% Val · ${Math.round(sig.sentiment_momentum_weight*100)}% Sent/Mom</div>
+          <div class="h-weights">Weights: ${Math.round(sig.fundamentals_weight * 100)}% Fund · ${Math.round(sig.valuation_weight * 100)}% Val · ${Math.round(sig.sentiment_momentum_weight * 100)}% Sent/Mom</div>
         `;
         hGrid.appendChild(card);
       });
@@ -406,4 +540,5 @@
     loadLeaderboard();
   </script>
 </body>
+
 </html>
