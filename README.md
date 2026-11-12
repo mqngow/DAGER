@@ -152,9 +152,9 @@ DAGER produces an investment verdict (**Strong Buy / Buy / Hold / Avoid**) and a
 
 ### Phase 2: Collectors (SEC EDGAR, News, Prices)
 - [x] **`dager/collectors/edgar_client.py`**: SEC EDGAR CIK lookup, rate-limited `companyfacts` and `submissions` fetcher.
-- [ ] **Company Name / Ticker Resolver**: Extend `edgar_client.py` to support fuzzy company title matching alongside ticker lookup (using SEC's `company_tickers.json` `title` field) and S&P 500 constituent list loading.
-- [ ] **`dager/collectors/market_client.py`**: Fetch historical stock prices (3–5 years), current price, market cap, and benchmark comparison.
-- [ ] **`dager/collectors/news_client.py` & `transcript_client.py`**: Pull recent company news via RSS/financial news APIs and earnings transcripts.
+- [x] **Company Name / Ticker Resolver**: Extend `edgar_client.py` to support fuzzy company title matching alongside ticker lookup (using SEC's `company_tickers.json` `title` field) and S&P 500 constituent list loading.
+- [x] **`dager/collectors/market_client.py`**: Fetch historical stock prices (3–5 years), current price, market cap, and benchmark comparison.
+- [x] **`dager/collectors/news_client.py` & `transcript_client.py`**: Pull recent company news via RSS/financial news APIs and earnings transcripts.
 
 ### Phase 3: Core Analysis Engine (Fundamentals, Sentiment, Evaluator)
 - [ ] **`dager/core/fundamentals/`**: Parse SEC XBRL `us-gaap` tags into standardized time series and compute balance sheet health (`balance_sheet.py`), cash flow metrics (`cash_flow.py`), profitability (`income.py`), and cross-statement ratios (`ratios.py`).
