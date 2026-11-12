@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DAGER — Multi-Horizon Investment Research Engine</title>
+  <style>
+    /* ==========================================================================
+       Theme Variables & Global Reset
+       Dark financial terminal aesthetic with color-coded Buy / Hold / Avoid pills.
+       ========================================================================== */
+    :root {
+      --bg: #0b0f19;
+      --panel: #131b2e;
+      --panel-alt: #19233c;
+      --border: #263354;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --strong-buy: #10b981;
+      --buy: #34d399;
+      --hold: #f59e0b;
+      --avoid: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 24px;
+    }
+    .container { max-width: 1240px; margin: 0 auto; }
+
+    /* ==========================================================================
+       Header & On-Demand Ticker / Company Search Bar
+       ========================================================================== */
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 24px;
+    }
+    .brand h1 { font-size: 1.75rem; letter-spacing: 0.5px; color: #fff; }
+    .brand p { color: var(--muted); font-size: 0.9rem; }
+    .search-box { display: flex; gap: 8px; flex: 1; max-width: 520px; }
+    .search-box input {
+      flex: 1;
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: #fff;
+      font-size: 0.95rem;
+    }
+    button {
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: none;
+      background: var(--accent);
+      color: #0b0f19;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    button:hover { opacity: 0.9; }
+    button.secondary {
+      background: var(--panel-alt);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    /* ==========================================================================
+       Cards, Multi-Horizon Strip (1m, 3m, 6m, 1y, 3y, 5y) & Verdict Badges
+       ========================================================================== */
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .card-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+    .v-strong-buy { background: rgba(16, 185, 129, 0.2); color: var(--strong-buy); border: 1px solid var(--strong-buy); }
+    .v-buy        { background: rgba(52, 211, 153, 0.18); color: var(--buy); border: 1px solid var(--buy); }
+    .v-hold       { background: rgba(245, 158, 11, 0.18); color: var(--hold); border: 1px solid var(--hold); }
+    .v-avoid      { background: rgba(239, 68, 68, 0.18); color: var(--avoid); border: 1px solid var(--avoid); }
+
+    .horizon-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px;
+    }
+    .horizon-card {
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .horizon-card .h-label { font-size: 0.85rem; color: var(--muted); font-weight: 600; }
+    .horizon-card .h-score { font-size: 1.5rem; font-weight: 700; margin: 6px 0; }
+    .horizon-card .h-weights { font-size: 0.72rem; color: var(--muted); margin-top: 8px; }
+    .horizon-card .h-desc { font-size: 0.78rem; color: var(--text); margin-top: 6px; }
+
+    /* ==========================================================================
+       Metrics Grid & Leaderboard Table
+       ========================================================================== */
+    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; }
+    .metric-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .metric-item {
+      background: var(--panel-alt);
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .metric-item span { display: block; font-size: 0.76rem; color: var(--muted); }
+    .metric-item strong { font-size: 1.05rem; color: #fff; }
+    ul.thesis-list { padding-left: 18px; }
+    ul.thesis-list li { margin-bottom: 6px; font-size: 0.92rem; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; }
+    tr.clickable:hover { background: var(--panel-alt); cursor: pointer; }
+    #status-banner { color: var(--accent); margin-bottom: 14px; font-size: 0.92rem; min-height: 22px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Top Header & On-Demand Ticker/Company Search -->
+    <header>
+      <div class="brand">
+        <h1>DAGER</h1>
+        <p>SEC EDGAR Balance Sheet + FinBERT Sentiment + Valuation Engine (1m · 3m · 6m · 1y · 3y · 5y)</p>
+      </div>
+      <div class="search-box">
+        <input id="query-input" type="text" placeholder="Search ticker or company name (e.g. AAPL, Microsoft, NVDA)..." />
+        <button onclick="runEvaluation(false)">Analyze</button>
+        <button class="secondary" onclick="runEvaluation(true)" title="Bypass DB cache and pull fresh SEC/market data">Refresh</button>
+      </div>
+    </header>
+
+    <div id="status-banner"></div>
+
+    <!-- Active Single-Company Evaluation View -->
+    <div id="report-section" class="hidden">
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+          <div>
+            <h2 id="rep-title" style="font-size:1.5rem;"></h2>
+            <p id="rep-meta" style="color:var(--muted); font-size:0.85rem; margin-top:4px;"></p>
+          </div>
+          <div style="text-align:right;">
+            <span id="rep-verdict" class="badge"></span>
+            <div id="rep-score" style="font-size:1.6rem; font-weight:700; margin-top:6px;"></div>
+          </div>
+        </div>
+        <p id="rep-summary" style="margin-top:14px; font-size:0.98rem;"></p>
+      </div>
+
+      <!-- Multi-Horizon Verdict Strip (1m, 3m, 6m, 1y, 3y, 5y) -->
+      <div class="card">
+        <div class="card-title">Multi-Horizon Signals (1m · 3m · 6m · 1y · 3y · 5y — Zero Extra API Calls)</div>
+        <div id="horizon-grid" class="horizon-grid"></div>
+      </div>
+
+      <!-- Pillar 1 (Balance Sheet & Fundamentals) + Pillar 2 & 3 (Valuation & Sentiment) -->
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title">Pillar 1: SEC EDGAR Balance Sheet &amp; Fundamentals</div>
+          <div id="fund-metrics" class="metric-list"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Pillar 2 &amp; 3: Valuation vs. Fair Value &amp; Sentiment</div>
+          <div id="val-metrics" class="metric-list"></div>
+        </div>
+      </div>
+
+      <!-- Bull Case & Bear Case Thesis -->
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title" style="color:var(--strong-buy);">Bull Case Catalysts</div>
+          <ul id="bull-list" class="thesis-list"></ul>
+        </div>
+        <div class="card">
+          <div class="card-title" style="color:var(--avoid);">Bear Case &amp; Risk Factors</div>
+          <ul id="bear-list" class="thesis-list"></ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pre-Computed / Stored Leaderboard Table -->
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <div class="card-title" style="margin-bottom:0;">Stored Evaluations Leaderboard</div>
+        <button class="secondary" onclick="seedSample()">Seed Top S&amp;P 500 Sample</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Ticker</th>
+            <th>Company</th>
+            <th>6m–3y Verdict</th>
+            <th>Score</th>
+            <th>1m</th>
+            <th>3m</th>
+            <th>6m</th>
+            <th>1y</th>
+            <th>3y</th>
+            <th>5y</th>
+            <th>Balance Sheet</th>
+          </tr>
+        </thead>
+        <tbody id="leaderboard-body">
+          <tr><td colspan="11" style="color:var(--muted);">Loading stored evaluations...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // =========================================================================
+    // Formatting & Badge Helpers
+    // =========================================================================
+    function verdictClass(verdict) {
+      if (verdict === "Strong Buy") return "v-strong-buy";
+      if (verdict === "Buy") return "v-buy";
+      if (verdict === "Hold") return "v-hold";
+      return "v-avoid";
+    }
+    function fmtNum(val, suffix = "", decimals = 2) {
+      if (val === null || val === undefined) return "N/A";
+      return Number(val).toFixed(decimals) + suffix;
+    }
+    function fmtPct(decimalVal) {
+      if (decimalVal === null || decimalVal === undefined) return "N/A";
+      return (Number(decimalVal) * 100).toFixed(1) + "%";
+    }
+
+    // =========================================================================
+    // On-Demand Evaluation Fetcher (`GET /api/evaluate/{query}`)
+    // =========================================================================
+    async function runEvaluation(forceRefresh = false, customQuery = null) {
+      const input = document.getElementById("query-input");
+      const query = (customQuery || input.value).trim();
+      if (!query) return;
+      input.value = query;
+
+      const banner = document.getElementById("status-banner");
+      banner.textContent = `Evaluating '${query}' (checking DB cache or pulling live SEC EDGAR + Market + News)...`;
+
+      try {
+        const resp = await fetch(`/api/evaluate/${encodeURIComponent(query)}?force_refresh=${forceRefresh}`);
+        if (!resp.ok) {
+          const err = await resp.json();
+          banner.textContent = `Error: ${err.detail || resp.statusText}`;
+          return;
+        }
+        const rep = await resp.json();
+        renderReport(rep);
+        banner.textContent = rep.was_cached
+          ? `Served '${rep.ticker}' instantly from database cache.`
+          : `Computed '${rep.ticker}' live from SEC EDGAR, Yahoo Finance & News feeds and cached to DB.`;
+        loadLeaderboard();
+      } catch (e) {
+        banner.textContent = `Request failed: ${e}`;
+      }
+    }
+
+    // =========================================================================
+    // Render Single-Company Report & Multi-Horizon Cards
+    // =========================================================================
+    function renderReport(rep) {
+      document.getElementById("report-section").classList.remove("hidden");
+      document.getElementById("rep-title").textContent = `${rep.company_name} (${rep.ticker})`;
+      document.getElementById("rep-meta").textContent =
+        `SEC CIK: ${rep.cik} · ${rep.was_cached ? "Cached DB Record" : "Computed On-Demand"} · Evaluated: ${new Date(rep.evaluated_at).toLocaleString()}`;
+
+      const vBadge = document.getElementById("rep-verdict");
+      vBadge.textContent = `${rep.verdict} (6m–3y)`;
+      vBadge.className = `badge ${verdictClass(rep.verdict)}`;
+      document.getElementById("rep-score").textContent = `${rep.composite_score.toFixed(1)} / 100`;
+      document.getElementById("rep-summary").textContent = rep.thesis_summary;
+
+      // Render 1m, 3m, 6m, 1y, 3y, 5y Horizon Cards
+      const hOrder = ["1m", "3m", "6m", "1y", "3y", "5y"];
+      const hNames = { "1m": "1 Month", "3m": "3 Months", "6m": "6 Months", "1y": "1 Year", "3y": "3 Years", "5y": "5 Years" };
+      const hGrid = document.getElementById("horizon-grid");
+      hGrid.innerHTML = "";
+      hOrder.forEach(hKey => {
+        const sig = (rep.horizon_signals || {})[hKey];
+        if (!sig) return;
+        const card = document.createElement("div");
+        card.className = "horizon-card";
+        card.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span class="h-label">${hNames[hKey]} (${hKey})</span>
+            <span class="badge ${verdictClass(sig.verdict)}">${sig.verdict}</span>
+          </div>
+          <div class="h-score">${sig.score.toFixed(1)}<span style="font-size:0.85rem; color:var(--muted);">/100</span></div>
+          <div class="h-desc">${sig.driver_summary}</div>
+          <div class="h-weights">Weights: ${Math.round(sig.fundamentals_weight*100)}% Fund · ${Math.round(sig.valuation_weight*100)}% Val · ${Math.round(sig.sentiment_momentum_weight*100)}% Sent/Mom</div>
+        `;
+        hGrid.appendChild(card);
+      });
+
+      // Render Pillar 1 Metrics
+      const f = rep.fundamentals;
+      document.getElementById("fund-metrics").innerHTML = `
+        <div class="metric-item"><span>Pillar 1 Score</span><strong>${fmtNum(f.pillar_score, " / 100", 1)}</strong></div>
+        <div class="metric-item"><span>Balance Sheet Score</span><strong>${fmtNum(f.balance_sheet_score, " / 100", 1)}</strong></div>
+        <div class="metric-item"><span>Current Ratio</span><strong>${fmtNum(f.current_ratio, "x")}</strong></div>
+        <div class="metric-item"><span>Quick Ratio</span><strong>${fmtNum(f.quick_ratio, "x")}</strong></div>
+        <div class="metric-item"><span>Debt / Equity</span><strong>${fmtNum(f.debt_to_equity, "x")}</strong></div>
+        <div class="metric-item"><span>Net Debt / EBITDA</span><strong>${fmtNum(f.net_debt_to_ebitda, "x")}</strong></div>
+        <div class="metric-item"><span>ROIC</span><strong>${fmtPct(f.roic)}</strong></div>
+        <div class="metric-item"><span>Operating Margin</span><strong>${fmtPct(f.operating_margin)}</strong></div>
+        <div class="metric-item"><span>Net Margin</span><strong>${fmtPct(f.net_margin)}</strong></div>
+        <div class="metric-item"><span>3Y Revenue CAGR</span><strong>${fmtPct(f.revenue_cagr_3y)}</strong></div>
+      `;
+
+      // Render Pillar 2 & 3 Metrics
+      const v = rep.valuation;
+      document.getElementById("val-metrics").innerHTML = `
+        <div class="metric-item"><span>Current Stock Price</span><strong>$${fmtNum(v.current_price)}</strong></div>
+        <div class="metric-item"><span>Est. Intrinsic Fair Value</span><strong>${v.estimated_fair_value ? "$" + fmtNum(v.estimated_fair_value) : "N/A"}</strong></div>
+        <div class="metric-item"><span>Implied Upside (6m–3y)</span><strong>${fmtNum(v.implied_upside_pct, "%", 1)}</strong></div>
+        <div class="metric-item"><span>Margin of Safety</span><strong>${fmtNum(v.margin_of_safety_pct, "%", 1)}</strong></div>
+        <div class="metric-item"><span>P/E Ratio</span><strong>${fmtNum(v.pe_ratio, "x", 1)}</strong></div>
+        <div class="metric-item"><span>EV / EBITDA</span><strong>${fmtNum(v.ev_to_ebitda, "x", 1)}</strong></div>
+        <div class="metric-item"><span>FCF Yield</span><strong>${fmtPct(v.fcf_yield)}</strong></div>
+        <div class="metric-item"><span>FinBERT Sentiment Score</span><strong>${fmtNum(rep.sentiment_score, " / 100", 1)}</strong></div>
+      `;
+
+      // Render Bull & Bear lists
+      document.getElementById("bull-list").innerHTML = (rep.bull_case || []).map(i => `<li>${i}</li>`).join("");
+      document.getElementById("bear-list").innerHTML = (rep.bear_case || []).map(i => `<li>${i}</li>`).join("");
+    }
+
+    // =========================================================================
+    // Leaderboard Loader & Batch Seeder
+    // =========================================================================
+    async function loadLeaderboard() {
+      const tbody = document.getElementById("leaderboard-body");
+      try {
+        const resp = await fetch("/api/sp500?sp500_only=false&limit=50");
+        const rows = await resp.json();
+        if (!rows.length) {
+          tbody.innerHTML = `<tr><td colspan="11" style="color:var(--muted);">No evaluations cached yet. Search a ticker above or click "Seed Top S&P 500 Sample".</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = rows.map(r => {
+          const hs = r.horizon_signals || {};
+          const cell = (k) => hs[k] ? `<span class="badge ${verdictClass(hs[k].verdict)}">${hs[k].verdict}</span>` : "-";
+          return `
+            <tr class="clickable" onclick="runEvaluation(false, '${r.ticker}')">
+              <td><strong>${r.ticker}</strong></td>
+              <td>${r.company_name}</td>
+              <td><span class="badge ${verdictClass(r.verdict)}">${r.verdict}</span></td>
+              <td><strong>${r.composite_score.toFixed(1)}</strong></td>
+              <td>${cell("1m")}</td>
+              <td>${cell("3m")}</td>
+              <td>${cell("6m")}</td>
+              <td>${cell("1y")}</td>
+              <td>${cell("3y")}</td>
+              <td>${cell("5y")}</td>
+              <td>${r.fundamentals.balance_sheet_score.toFixed(1)}</td>
+            </tr>
+          `;
+        }).join("");
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="11">Failed to load leaderboard: ${e}</td></tr>`;
+      }
+    }
+
+    async function seedSample() {
+      const banner = document.getElementById("status-banner");
+      banner.textContent = "Seeding top S&P 500 sample companies (AAPL, MSFT, NVDA) — please wait ~15s...";
+      await fetch("/api/sp500/seed?limit=3", { method: "POST" });
+      banner.textContent = "Sample S&P 500 evaluations completed and stored.";
+      loadLeaderboard();
+    }
+
+    document.getElementById("query-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") runEvaluation(false);
+    });
+    loadLeaderboard();
+  </script>
+</body>
+</html>

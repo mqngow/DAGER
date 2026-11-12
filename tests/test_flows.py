@@ -115,4 +115,32 @@ def test_on_demand_and_batch_evaluation_flows(
         news_client=fake_news,
     )
     assert report_forced.was_cached is False
+    assert set(report_forced.horizon_signals.keys()) == {"1m", "3m", "6m", "1y", "3y", "5y"}
+
+
+# ==============================================================================
+# Phase 6 Tests: FastAPI Web Dashboard & REST Endpoints
+# Verifies that the dashboard HTML (`GET /`), health check (`GET /api/health`),
+# and leaderboard (`GET /api/sp500`) respond with valid HTTP 200 payloads.
+# ==============================================================================
+def test_fastapi_dashboard_and_endpoints():
+    """Verify FastAPI web UI and JSON API endpoints."""
+    from fastapi.testclient import TestClient
+    from dager.web.api import app
+
+    client = TestClient(app)
+
+    health_resp = client.get("/api/health")
+    assert health_resp.status_code == 200
+    assert "5y" in health_resp.json()["supported_horizons"]
+
+    ui_resp = client.get("/")
+    assert ui_resp.status_code == 200
+    assert "DAGER" in ui_resp.text
+    assert "Multi-Horizon Signals" in ui_resp.text
+
+    sp500_resp = client.get("/api/sp500")
+    assert sp500_resp.status_code == 200
+    assert isinstance(sp500_resp.json(), list)
+
 

@@ -172,8 +172,8 @@ DAGER produces an investment verdict (**Strong Buy / Buy / Hold / Avoid**) and a
   - **On-Demand Single-Company Flow**: Triggered when a user queries a non-cached or stale company ticker/name; pulls EDGAR balance sheets, news, and stock prices live, evaluates the 6m–3y outlook, persists results, and returns the report.
 
 ### Phase 6: Web Application & API
-- [ ] **`dager/web/`**: Build the API and web dashboard where users can:
-  - Browse ranked S&P 500 companies by 6m–3y investment score.
+- [x] **`dager/web/`**: Build the API and web dashboard where users can:
+  - Browse ranked S&P 500 companies by 6m–3y and multi-horizon (`1m`, `3m`, `6m`, `1y`, `3y`, `5y`) investment scores.
   - Search any company name or ticker (automatically triggering the on-demand flow if not already stored).
   - Inspect the balance sheet health breakdown, historical stock price vs. fair value, recent news sentiment, and the final investment recommendation.
 
