@@ -157,9 +157,9 @@ DAGER produces an investment verdict (**Strong Buy / Buy / Hold / Avoid**) and a
 - [x] **`dager/collectors/news_client.py` & `transcript_client.py`**: Pull recent company news via RSS/financial news APIs and earnings transcripts.
 
 ### Phase 3: Core Analysis Engine (Fundamentals, Sentiment, Evaluator)
-- [ ] **`dager/core/fundamentals/`**: Parse SEC XBRL `us-gaap` tags into standardized time series and compute balance sheet health (`balance_sheet.py`), cash flow metrics (`cash_flow.py`), profitability (`income.py`), and cross-statement ratios (`ratios.py`).
-- [ ] **`dager/core/sentiment/`**: Clean HTML/text (`parser.py`) and run FinBERT scoring with time-decay aggregation (`scorer.py`).
-- [ ] **`dager/core/evaluator/`**: Combine balance sheet health, price valuation (`valuation.py`), and sentiment into a 6-month to 3-year investment score and human-readable thesis (`ranker.py`).
+- [x] **`dager/core/fundamentals/`**: Parse SEC XBRL `us-gaap` tags into standardized time series and compute balance sheet health (`balance_sheet.py`), cash flow metrics (`cash_flow.py`), profitability (`income.py`), and cross-statement ratios (`ratios.py`).
+- [x] **`dager/core/sentiment/`**: Clean HTML/text (`parser.py`) and run FinBERT scoring with time-decay aggregation (`scorer.py`).
+- [x] **`dager/core/evaluator/`**: Combine balance sheet health, price valuation (`valuation.py`), and sentiment into a 6-month to 3-year investment score and human-readable thesis (`ranker.py`).
 
 ### Phase 4: Persistence Layer (S&P 500 Store & Cache Lookup)
 - [ ] **`dager/storage/db.py` & `models.py`**: Configure SQLAlchemy engine/sessions and tables for `Company`, `FinancialStatement`, `StockPrice`, `SentimentRecord`, and `EvaluationResult`.
