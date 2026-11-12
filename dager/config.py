@@ -1,1 +1,109 @@
-﻿"""App settings, logging, and environment parsing."""
+"""App settings, logging, and environment parsing."""
+
+import logging
+from functools import lru_cache
+from typing import Optional
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# ==============================================================================
+# Application Settings Model
+# Centralizes all environment variables with type validation and sensible defaults
+# using Pydantic Settings. Automatically loads values from a local `.env` file.
+# ==============================================================================
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # --- SEC EDGAR Configuration ---
+    # SEC requires a descriptive User-Agent header in the format "AppName ContactEmail"
+    sec_user_agent: str = Field(
+        default="DAGER-Research contact@example.com",
+        description="User-Agent string required by SEC EDGAR fair access policy.",
+    )
+    sec_min_interval_seconds: float = Field(
+        default=0.15,
+        ge=0.1,
+        description="Minimum delay between SEC requests (0.15s = ~6.6 req/sec, well under 10 req/sec limit).",
+    )
+
+    # --- Database Configuration ---
+    # Supports SQLite out of the box and PostgreSQL in production deployments
+    database_url: str = Field(
+        default="sqlite:///./dager.db",
+        description="SQLAlchemy connection URI for relational persistence.",
+    )
+
+    # --- External API Keys ---
+    # Optional keys for supplemental news and market data providers
+    news_api_key: Optional[str] = Field(
+        default=None,
+        description="Optional API key for NewsAPI or supplemental financial news providers.",
+    )
+    finnhub_api_key: Optional[str] = Field(
+        default=None,
+        description="Optional API key for Finnhub market/news endpoints.",
+    )
+
+    # --- NLP & Sentiment Configuration ---
+    # Configures the HuggingFace FinBERT model and exponential recency decay
+    finbert_model_name: str = Field(
+        default="ProsusAI/finbert",
+        description="HuggingFace model identifier for financial sentiment scoring.",
+    )
+    sentiment_decay_half_life_days: float = Field(
+        default=14.0,
+        gt=0.0,
+        description="Half-life in days for weighting recent news more heavily than older articles.",
+    )
+
+    # --- Cache & Pillar Weight Settings ---
+    # Controls cache freshness for S&P 500 batch runs vs. on-demand user queries
+    sp500_cache_ttl_hours: int = Field(
+        default=24,
+        ge=1,
+        description="Time-to-live (hours) before pre-computed S&P 500 evaluations are considered stale.",
+    )
+    ondemand_cache_ttl_hours: int = Field(
+        default=12,
+        ge=1,
+        description="Time-to-live (hours) before an on-demand ticker evaluation is re-computed.",
+    )
+
+    # --- Logging Configuration ---
+    log_level: str = Field(
+        default="INFO",
+        description="Application-wide logging verbosity (DEBUG, INFO, WARNING, ERROR).",
+    )
+
+
+# ==============================================================================
+# Singleton Settings Accessor & Logging Helper
+# Caches the parsed Settings object so `.env` is read only once per process,
+# and provides a standard logger factory for all DAGER modules.
+# ==============================================================================
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return a cached singleton instance of application Settings."""
+    return Settings()
+
+
+def configure_logging(level: Optional[str] = None) -> logging.Logger:
+    """Configure root DAGER logger with a consistent timestamped format."""
+    effective_level = (level or get_settings().log_level).upper()
+    logging.basicConfig(
+        level=getattr(logging, effective_level, logging.INFO),
+        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    return logging.getLogger("dager")
+
+
+# Convenience module-level settings instance
+settings = get_settings()
+

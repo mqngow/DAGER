@@ -1,9 +1,10 @@
-﻿"""SEC EDGAR SEC API wrapper (rate-limiting, custom User-Agent)."""
+"""SEC EDGAR SEC API wrapper (rate-limiting, custom User-Agent)."""
 
-import os
-import time
 from typing import Any, Dict, Optional
+import time
 import httpx
+
+from dager.config import settings
 
 
 class EdgarClient:
@@ -13,15 +14,20 @@ class EdgarClient:
     def __init__(
         self,
         user_agent: Optional[str] = None,
-        min_interval_seconds: float = 0.15,  # Caps requests at ~6.6 req/sec
+        min_interval_seconds: Optional[float] = None,  # Caps requests at ~6.6 req/sec by default
     ):
-        self.user_agent = user_agent or os.getenv("SEC_USER_AGENT")
+        # Fall back to centralized config settings if explicit arguments are omitted
+        self.user_agent = user_agent or settings.sec_user_agent
         if not self.user_agent:
             raise ValueError(
                 "A descriptive SEC_USER_AGENT ('AppName ContactEmail') must be specified."
             )
 
-        self.min_interval = min_interval_seconds
+        self.min_interval = (
+            min_interval_seconds
+            if min_interval_seconds is not None
+            else settings.sec_min_interval_seconds
+        )
         self.last_request_time = 0.0
         self.headers = {
             "User-Agent": self.user_agent,

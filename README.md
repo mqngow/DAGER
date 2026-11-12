@@ -146,9 +146,9 @@ DAGER produces an investment verdict (**Strong Buy / Buy / Hold / Avoid**) and a
 ## Phased Implementation Roadmap 
 
 ### Phase 1: Foundation, Config & Schemas
-- [ ] **`pyproject.toml` & `.env.example`**: Define dependencies (`httpx`, `pydantic`, `pydantic-settings`, `sqlalchemy`, `prefect`, `yfinance` or price provider, `transformers`/`torch` for FinBERT, `fastapi`, `pytest`).
-- [ ] **`dager/config.py`**: Centralize settings (`SEC_USER_AGENT`, `DATABASE_URL`, news API keys, cache TTL for S&P 500 vs. on-demand lookups).
-- [ ] **`dager/schemas/`**: Define Pydantic models in `filings.py` (balance sheet, income, cash flow periods), `sentiment.py` (articles, sentiment scores), and `evaluation.py` (composite score, pillar breakdowns, 6m–3y recommendation).
+- [x] **`pyproject.toml` & `.env.example`**: Define dependencies (`httpx`, `pydantic`, `pydantic-settings`, `sqlalchemy`, `prefect`, `yfinance` or price provider, `transformers`/`torch` for FinBERT, `fastapi`, `pytest`).
+- [x] **`dager/config.py`**: Centralize settings (`SEC_USER_AGENT`, `DATABASE_URL`, news API keys, cache TTL for S&P 500 vs. on-demand lookups).
+- [x] **`dager/schemas/`**: Define Pydantic models in `filings.py` (balance sheet, income, cash flow periods), `sentiment.py` (articles, sentiment scores), and `evaluation.py` (composite score, pillar breakdowns, 6m–3y recommendation).
 
 ### Phase 2: Collectors (SEC EDGAR, News, Prices)
 - [x] **`dager/collectors/edgar_client.py`**: SEC EDGAR CIK lookup, rate-limited `companyfacts` and `submissions` fetcher.
