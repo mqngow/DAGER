@@ -124,7 +124,7 @@ DAGER/
 
 ---
 
-## Evaluation Methodology (6-Month to 3-Year Horizon)
+## Evaluation Methodology (1-Month to 5-Year Horizon)
 
 DAGER produces an investment verdict (**Strong Buy / Buy / Hold / Avoid**) and a composite score (`0–100`) driven by three pillars:
 
