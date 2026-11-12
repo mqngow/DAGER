@@ -1,6 +1,7 @@
 ﻿"""Modular Prefect tasks with zero-overhead fallback when Prefect runtime is not active."""
 
 from typing import Any, Callable, TypeVar
+import dager.config  # noqa: F401 - ensures `.env` is loaded into `os.environ` before Prefect initializes
 
 F = TypeVar("F", bound=Callable[..., Any])
 

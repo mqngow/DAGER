@@ -1,11 +1,14 @@
 ﻿"""Database connection pools, SQLAlchemy Engine, and Session management."""
 
+import logging
 from contextlib import contextmanager
 from typing import Generator, Optional
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from dager.config import settings
+
+logger = logging.getLogger("dager.storage")
 
 
 # ==============================================================================
@@ -26,8 +29,14 @@ _SessionLocal: Optional[sessionmaker[Session]] = None
 
 
 def _normalize_db_url(raw_url: str) -> str:
-    """Normalize `postgres://` URIs (from Supabase/Heroku) into SQLAlchemy `postgresql://` format."""
+    """Normalize `postgres://` URIs and fall back to SQLite if `[YOUR-PASSWORD]` placeholder is unreplaced."""
     url = raw_url.strip()
+    if "[YOUR-PASSWORD]" in url:
+        logger.warning(
+            "DATABASE_URL in .env still contains the literal '[YOUR-PASSWORD]' placeholder; "
+            "falling back to local 'sqlite:///./dager.db' until replaced with your Supabase password."
+        )
+        return "sqlite:///./dager.db"
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://") :]
     return url

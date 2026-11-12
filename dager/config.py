@@ -1,10 +1,22 @@
 """App settings, logging, and environment parsing."""
 
-import logging
 from functools import lru_cache
+import logging
+import os
 from typing import Optional
+from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Load `.env` into `os.environ` immediately so third-party SDKs (like Prefect Cloud)
+# automatically see `PREFECT_API_KEY` and `PREFECT_API_URL`.
+load_dotenv()
+if "PREFECT_API_URL" in os.environ and "app.prefect.cloud/account/" in os.environ["PREFECT_API_URL"]:
+    os.environ["PREFECT_API_URL"] = (
+        os.environ["PREFECT_API_URL"]
+        .replace("https://app.prefect.cloud/account/", "https://api.prefect.cloud/api/accounts/")
+        .replace("/workspace/", "/workspaces/")
+    )
 
 
 # ==============================================================================
