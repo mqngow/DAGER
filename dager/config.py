@@ -2,7 +2,9 @@
 
 from functools import lru_cache
 import logging
+from logging.handlers import RotatingFileHandler
 import os
+from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 from pydantic import Field
@@ -11,6 +13,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Load `.env` into `os.environ` immediately so third-party SDKs (like Prefect Cloud)
 # automatically see `PREFECT_API_KEY` and `PREFECT_API_URL`.
 load_dotenv()
+if os.environ.get("PREFECT_API_KEY"):
+    os.environ.pop("PREFECT_API_AUTH_STRING", None)
 if "PREFECT_API_URL" in os.environ and "app.prefect.cloud/account/" in os.environ["PREFECT_API_URL"]:
     os.environ["PREFECT_API_URL"] = (
         os.environ["PREFECT_API_URL"]
@@ -105,15 +109,38 @@ def get_settings() -> Settings:
     return Settings()
 
 
-def configure_logging(level: Optional[str] = None) -> logging.Logger:
-    """Configure root DAGER logger with a consistent timestamped format."""
-    effective_level = (level or get_settings().log_level).upper()
-    logging.basicConfig(
-        level=getattr(logging, effective_level, logging.INFO),
-        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    return logging.getLogger("dager")
+def configure_logging(level: Optional[str] = None, log_file: str = "logs/dager.log") -> logging.Logger:
+    """
+    Configure root DAGER logger with both console output and a persistent
+    rotating log file (`logs/dager.log`) so all pipeline runs are collected.
+    """
+    effective_level = getattr(logging, (level or get_settings().log_level).upper(), logging.INFO)
+    log_format = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+    formatter = logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
+
+    # Ensure `logs/` directory exists for persistent log collection
+    log_path = Path(log_file)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    root_logger = logging.getLogger("dager")
+    root_logger.setLevel(effective_level)
+
+    if not root_logger.handlers:
+        # 1. Console Stream Handler
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(effective_level)
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
+
+        # 2. Rotating File Handler (5 MB per file, keeps last 3 log files)
+        file_handler = RotatingFileHandler(
+            log_path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        )
+        file_handler.setLevel(effective_level)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
+    return root_logger
 
 
 # Convenience module-level settings instance

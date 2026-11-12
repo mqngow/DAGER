@@ -16,11 +16,13 @@ try:
     from prefect import flow as _real_flow, task as _real_task  # type: ignore
 
     def prefect_task(*args: Any, **kwargs: Any) -> Callable[[F], F]:
-        """Wrap a function as a Prefect `@task`."""
+        """Wrap a function as a Prefect `@task` with `log_prints=True` enabled by default."""
+        kwargs.setdefault("log_prints", True)
         return _real_task(*args, **kwargs)
 
     def prefect_flow(*args: Any, **kwargs: Any) -> Callable[[F], F]:
-        """Wrap a function as a Prefect `@flow`."""
+        """Wrap a function as a Prefect `@flow` with `log_prints=True` enabled by default."""
+        kwargs.setdefault("log_prints", True)
         return _real_flow(*args, **kwargs)
 
     PREFECT_AVAILABLE = True

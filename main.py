@@ -1,56 +1,129 @@
-"""Main application entrypoint for starting the DAGER web server or running evaluations."""
+"""Master Prefect Pipeline & Application Entrypoint (`main.py`)."""
 
 import argparse
-from dotenv import load_dotenv
+from typing import List, Optional
 import uvicorn
 
 from dager.config import configure_logging, settings
+from dager.pipeline import prefect_flow
+from dager.schemas.evaluation import StockEvaluationReport
+from dager.storage import init_db
+from flows.evaluation_flow import (
+    daily_sp500_evaluation_flow,
+    evaluate_single_company_flow,
+)
+from flows.fundamentals_flow import ingest_company_fundamentals_flow
+from flows.sentiment_flow import ingest_company_sentiment_flow
+
+# Initialize console + rotating file logger (`logs/dager.log`) immediately
+logger = configure_logging()
 
 
 # ==============================================================================
-# DAGER Main Application Entrypoint (`python main.py`)
-# Loads `.env` variables (including `PREFECT_API_KEY`, `PREFECT_API_URL`, and
-# `DATABASE_URL`) and either:
-# 1. Starts the FastAPI Web Dashboard & API server on `http://127.0.0.1:8000` (default).
-# 2. Runs an on-demand ticker evaluation (`python main.py --ticker AAPL`).
-# 3. Runs a batch S&P 500 evaluation (`python main.py --batch 10`).
+# Master End-to-End Prefect Pipeline Flow (`dager_master_pipeline_flow`)
+# Orchestrates the entire DAGER workflow in one top-level Prefect flow:
+# 1. Initializes the relational database (Supabase PostgreSQL or local SQLite).
+# 2. Runs either a targeted single-company flow (`ticker`) or the S&P 500 batch
+#    flow (`fundamentals_flow` -> `sentiment_flow` -> `evaluation_flow`).
+# 3. Logs every step to both `logs/dager.log` and Prefect Cloud (`log_prints=True`).
+# ==============================================================================
+@prefect_flow(name="dager-master-pipeline")
+def dager_master_pipeline_flow(
+    ticker: Optional[str] = None,
+    limit: int = 5,
+    force_refresh: bool = False,
+    include_transcripts: bool = False,
+    use_finbert: bool = True,
+) -> List[StockEvaluationReport]:
+    """Execute the complete DAGER Prefect pipeline and collect structured logs."""
+    logger.info("Starting DAGER Master Prefect Pipeline (ticker=%s, limit=%s)", ticker, limit)
+    init_db()
+
+    if ticker:
+        logger.info("Running single-company Prefect flow for query='%s'", ticker)
+        report = evaluate_single_company_flow(
+            query=ticker,
+            force_refresh=force_refresh,
+            include_transcripts=include_transcripts,
+            use_finbert=use_finbert,
+        )
+        logger.info(
+            "Completed evaluation for %s (%s) | Verdict=%s | Score=%.1f/100 | Cached=%s",
+            report.company_name,
+            report.ticker,
+            report.verdict.value,
+            report.composite_score,
+            report.was_cached,
+        )
+        return [report]
+
+    logger.info("Running S&P 500 batch Prefect flow (limit=%d, force_refresh=%s)", limit, force_refresh)
+    reports = daily_sp500_evaluation_flow(
+        limit=limit,
+        force_refresh=force_refresh,
+        include_transcripts=include_transcripts,
+        use_finbert=use_finbert,
+    )
+    logger.info("Finished S&P 500 batch flow: %d companies evaluated and stored.", len(reports))
+    for rep in reports:
+        logger.info(
+            "  [%s] 6m-3y=%s (%.1f) | 1m=%s | 3m=%s | 6m=%s | 1y=%s | 3y=%s | 5y=%s",
+            rep.ticker,
+            rep.verdict.value,
+            rep.composite_score,
+            rep.horizon_signals["1m"].verdict.value if "1m" in rep.horizon_signals else "-",
+            rep.horizon_signals["3m"].verdict.value if "3m" in rep.horizon_signals else "-",
+            rep.horizon_signals["6m"].verdict.value if "6m" in rep.horizon_signals else "-",
+            rep.horizon_signals["1y"].verdict.value if "1y" in rep.horizon_signals else "-",
+            rep.horizon_signals["3y"].verdict.value if "3y" in rep.horizon_signals else "-",
+            rep.horizon_signals["5y"].verdict.value if "5y" in rep.horizon_signals else "-",
+        )
+    return reports
+
+
+# ==============================================================================
+# CLI Runner (`python main.py`)
+# Default: Runs the full `dager_master_pipeline_flow` and logs to `logs/dager.log`
+# and Prefect Cloud.
+# Optional flags:
+# - `python main.py --ticker AAPL`: Run full Prefect flow for a single company.
+# - `python main.py --limit 10`: Run full Prefect batch flow for 10 S&P 500 companies.
+# - `python main.py --serve`: Register & serve daily cron deployment in Prefect Cloud.
+# - `python main.py --web`: Launch the FastAPI Web Dashboard at http://127.0.0.1:8000.
 # ==============================================================================
 def main() -> None:
-    load_dotenv()
-    configure_logging()
-
-    parser = argparse.ArgumentParser(description="DAGER — Investment Research & Decision Engine")
+    parser = argparse.ArgumentParser(description="DAGER — Master Prefect Pipeline & Web Server")
+    parser.add_argument("--ticker", type=str, default=None, help="Run the Prefect pipeline for a single ticker/company.")
+    parser.add_argument("--limit", type=int, default=5, help="Number of S&P 500 companies for batch Prefect run (default: 5).")
+    parser.add_argument("--force-refresh", action="store_true", help="Bypass DB cache and recompute live.")
+    parser.add_argument("--serve", action="store_true", help="Serve scheduled daily Prefect deployment (cron).")
+    parser.add_argument("--cron", type=str, default="0 6 * * *", help="Cron schedule for --serve (default: '0 6 * * *').")
+    parser.add_argument("--web", action="store_true", help="Start the FastAPI Web Dashboard instead of a batch run.")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Web server host (default: 127.0.0.1).")
     parser.add_argument("--port", type=int, default=8000, help="Web server port (default: 8000).")
-    parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development.")
-    parser.add_argument("--ticker", type=str, help="Run a single company evaluation in the terminal and exit.")
-    parser.add_argument("--batch", type=int, help="Run a batch S&P 500 evaluation for N companies and exit.")
     args = parser.parse_args()
 
-    if args.ticker:
-        from flows.evaluation_flow import evaluate_single_company_flow
-
-        rep = evaluate_single_company_flow(args.ticker)
-        print(f"\n=== {rep.company_name} ({rep.ticker}) ===")
-        print(f"Headline (6m-3y): {rep.verdict.value} | Score: {rep.composite_score}/100")
-        for h_key in ("1m", "3m", "6m", "1y", "3y", "5y"):
-            sig = rep.horizon_signals.get(h_key)
-            if sig:
-                print(f"  [{h_key}] {sig.verdict.value:<10} ({sig.score:.1f}/100) - {sig.driver_summary}")
-        print(f"\nSummary: {rep.thesis_summary}\n")
+    if args.web:
+        logger.info("Launching DAGER FastAPI Web Dashboard at http://%s:%d", args.host, args.port)
+        uvicorn.run("dager.web.api:app", host=args.host, port=args.port, reload=False)
         return
 
-    if args.batch:
-        from flows.evaluation_flow import daily_sp500_evaluation_flow
-
-        reports = daily_sp500_evaluation_flow(limit=args.batch)
-        print(f"\nCompleted batch evaluation of {len(reports)} S&P 500 companies.")
+    if args.serve and hasattr(dager_master_pipeline_flow, "serve"):
+        logger.info("Serving scheduled Prefect deployment 'dager-daily-master' on cron='%s'", args.cron)
+        dager_master_pipeline_flow.serve(
+            name="dager-daily-master",
+            cron=args.cron,
+            parameters={"limit": args.limit, "force_refresh": True},
+        )
         return
 
-    print(f"Starting DAGER Web Server at http://{args.host}:{args.port} (DB: {settings.database_url.split('@')[-1]})")
-    uvicorn.run("dager.web.api:app", host=args.host, port=args.port, reload=args.reload)
+    # Default action: execute the full Prefect pipeline flow
+    dager_master_pipeline_flow(
+        ticker=args.ticker,
+        limit=args.limit,
+        force_refresh=args.force_refresh,
+    )
 
 
 if __name__ == "__main__":
     main()
-
