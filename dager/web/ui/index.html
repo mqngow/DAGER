@@ -352,7 +352,6 @@
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button onclick="syncFullSp500()">Sync Full S&amp;P 500 Now</button>
-            <button class="secondary" onclick="seedSample()">Seed Top S&amp;P 500 Sample</button>
           </div>
         </div>
         <div class="table-scroll">
@@ -704,25 +703,6 @@
         await Promise.all([refreshSyncStatus(), loadLeaderboard()]);
       } catch (e) {
         banner.textContent = `Full S&P 500 sync request failed: ${e}`;
-      }
-    }
-
-    async function seedSample() {
-      const banner = document.getElementById("status-banner");
-      switchTab("sp500");
-      banner.textContent = "Seeding top S&P 500 sample companies (AAPL, MSFT, NVDA) — please wait ~15s...";
-      try {
-        const resp = await fetch("/api/sp500/seed?limit=3", { method: "POST" });
-        if (!resp.ok) {
-          const err = await resp.json();
-          banner.textContent = `Seed failed: ${err.detail || resp.statusText}`;
-          return;
-        }
-        const seeded = await resp.json();
-        banner.textContent = `Sample S&P 500 evaluations completed and stored (${seeded.length} companies).`;
-        await Promise.all([refreshSyncStatus(), loadLeaderboard(), loadRecentSearches()]);
-      } catch (e) {
-        banner.textContent = `Seed request failed: ${e}`;
       }
     }
 
