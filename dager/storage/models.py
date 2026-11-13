@@ -1,4 +1,4 @@
-﻿"""Relational ORM models (`Company`, `FinancialStatement`, `StockPrice`, `SentimentRecord`, `EvaluationResult`)."""
+"""Relational ORM models (`Company`, `FinancialStatement`, `StockPrice`, `SentimentRecord`, `EvaluationResult`)."""
 
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -150,7 +150,7 @@ class EvaluationResult(Base):
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
     ticker: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, index=True)
-    horizon: Mapped[str] = mapped_column(String(16), default="6m-3y")
+    horizon: Mapped[str] = mapped_column(String(16), default="1m-5y")
 
     # Top-level decision metrics indexed for fast leaderboard ranking
     composite_score: Mapped[float] = mapped_column(Float, index=True, nullable=False)

@@ -1,4 +1,4 @@
-﻿"""Multi-factor composite scoring and multi-horizon (1m, 3m, 6m, 1y, 3y, 5y) thesis generator."""
+"""Multi-factor composite scoring and multi-horizon (1m, 3m, 6m, 1y, 3y, 5y) thesis generator."""
 
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -190,7 +190,7 @@ def _build_thesis(
     if not bull_case:
         bull_case.append("Stable operational footprint with established SEC reporting history.")
     if not bear_case:
-        bear_case.append("Standard macroeconomic and sector-level execution risks over a 6m–3y horizon.")
+        bear_case.append("Standard macroeconomic and sector-level execution risks over a 1m–5y horizon.")
 
     upside_str = (
         f"an estimated fair value of ${valuation.estimated_fair_value:.2f} ({valuation.implied_upside_pct:+.1f}% vs. ${valuation.current_price:.2f})"
@@ -198,7 +198,7 @@ def _build_thesis(
         else f"a current market price of ${valuation.current_price:.2f}"
     )
     thesis_summary = (
-        f"{company_name} ({ticker}) is rated '{verdict.value}' for a 6-month to 3-year horizon "
+        f"{company_name} ({ticker}) is rated '{verdict.value}' overall across a 1-month to 5-year (1m–5y) horizon "
         f"with a composite score of {composite_score:.1f}/100. "
         f"Fundamentals score {fundamentals.pillar_score:.1f}/100 (Balance Sheet: {fundamentals.balance_sheet_score:.1f}/100), "
         f"paired with {upside_str}."
@@ -252,7 +252,7 @@ def evaluate_company(
         is_sp500=financials.company.is_sp500,
         was_cached=was_cached,
         evaluated_at=datetime.now(timezone.utc),
-        horizon=InvestmentHorizon.SIX_MONTHS_TO_THREE_YEARS,
+        horizon=InvestmentHorizon.ONE_MONTH_TO_FIVE_YEARS,
         composite_score=composite_score,
         verdict=verdict,
         horizon_signals=horizon_signals,

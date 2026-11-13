@@ -25,6 +25,7 @@ class InvestmentHorizon(str, Enum):
     ONE_YEAR = "1y"
     THREE_YEARS = "3y"
     FIVE_YEARS = "5y"
+    ONE_MONTH_TO_FIVE_YEARS = "1m-5y"
     SIX_MONTHS_TO_THREE_YEARS = "6m-3y"
 
 
@@ -91,7 +92,7 @@ class ValuationBreakdown(BaseModel):
     )
     implied_upside_pct: Optional[float] = Field(
         default=None,
-        description="Projected 6m–3y percentage upside/downside to fair value ((Fair - Price) / Price).",
+        description="Projected 1m–5y percentage upside/downside to fair value ((Fair - Price) / Price).",
     )
     pe_ratio: Optional[float] = Field(default=None, description="Price-to-Earnings multiple.")
     ev_to_ebitda: Optional[float] = Field(default=None, description="Enterprise Value-to-EBITDA multiple.")
@@ -118,8 +119,8 @@ class StockEvaluationReport(BaseModel):
         description="UTC timestamp of evaluation.",
     )
     horizon: InvestmentHorizon = Field(
-        default=InvestmentHorizon.SIX_MONTHS_TO_THREE_YEARS,
-        description="Primary headline holding horizon (6m–3y).",
+        default=InvestmentHorizon.ONE_MONTH_TO_FIVE_YEARS,
+        description="Primary headline holding horizon (1m–5y).",
     )
 
     # --- Headline Composite Verdict & Multi-Horizon Signals (1m, 3m, 6m, 1y, 3y, 5y) ---

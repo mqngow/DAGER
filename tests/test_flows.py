@@ -1,4 +1,4 @@
-﻿"""Phase 5 end-to-end integration tests for Prefect tasks, On-Demand fallback, and S&P 500 batch flows."""
+"""Phase 5 end-to-end integration tests for Prefect tasks, On-Demand fallback, and S&P 500 batch flows."""
 
 from dager.collectors import EdgarClient, MarketClient, NewsClient
 from dager.storage import get_engine, init_db
@@ -123,9 +123,10 @@ def test_on_demand_and_batch_evaluation_flows(
 # Verifies that the dashboard HTML (`GET /`), health check (`GET /api/health`),
 # and leaderboard (`GET /api/sp500`) respond with valid HTTP 200 payloads.
 # ==============================================================================
-def test_fastapi_dashboard_and_endpoints():
+def test_fastapi_dashboard_and_endpoints(monkeypatch):
     """Verify FastAPI web UI and JSON API endpoints."""
     from fastapi.testclient import TestClient
+    from dager.config import settings
     from dager.web.api import app
 
     client = TestClient(app)
@@ -133,6 +134,7 @@ def test_fastapi_dashboard_and_endpoints():
     health_resp = client.get("/api/health")
     assert health_resp.status_code == 200
     assert "5y" in health_resp.json()["supported_horizons"]
+    assert "1m-5y" in health_resp.json()["supported_horizons"]
 
     ui_resp = client.get("/")
     assert ui_resp.status_code == 200
@@ -151,6 +153,7 @@ def test_fastapi_dashboard_and_endpoints():
     assert isinstance(sync_data["cached_count"], int)
 
     # Verify Google login fallback, profile endpoint, and favorite ticker watchlist
+    monkeypatch.setattr(settings, "google_client_id", None)
     login_resp = client.post(
         "/api/auth/google",
         json={"email": "student@example.com", "name": "Student User"},
@@ -165,7 +168,7 @@ def test_fastapi_dashboard_and_endpoints():
     assert me_resp.status_code == 200
     assert me_resp.json()["user"]["name"] == "Student User"
 
-    fav_resp = client.post("/api/user/favorites/AAPL", headers=auth_headers)
+    fav_resp = client.post("/api/user/favorites/AAPL?is_favorite=true", headers=auth_headers)
     assert fav_resp.status_code == 200
     assert fav_resp.json()["is_favorite"] is True
     assert "AAPL" in fav_resp.json()["favorites"]

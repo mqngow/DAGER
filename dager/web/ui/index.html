@@ -446,7 +446,7 @@
                 <th>Fav</th>
                 <th>Ticker</th>
                 <th>Company</th>
-                <th>6m–3y Verdict</th>
+                <th>1m–5y Verdict</th>
                 <th>Score</th>
                 <th>1m</th>
                 <th>3m</th>
@@ -529,7 +529,7 @@
                 <th>Fav</th>
                 <th>Ticker</th>
                 <th>Company</th>
-                <th>6m–3y Verdict</th>
+                <th>1m–5y Verdict</th>
                 <th>Score</th>
                 <th>1m</th>
                 <th>3m</th>
@@ -564,7 +564,7 @@
                 <th>Fav</th>
                 <th>Ticker</th>
                 <th>Company</th>
-                <th>6m–3y Verdict</th>
+                <th>1m–5y Verdict</th>
                 <th>Score</th>
                 <th>1m</th>
                 <th>3m</th>
@@ -918,7 +918,7 @@
       document.getElementById("val-metrics").innerHTML = `
         <div class="metric-item"><span>Current Stock Price</span><strong>$${fmtNum(v.current_price)}</strong></div>
         <div class="metric-item"><span>Est. Intrinsic Fair Value</span><strong>${v.estimated_fair_value ? "$" + fmtNum(v.estimated_fair_value) : "N/A"}</strong></div>
-        <div class="metric-item"><span>Implied Upside (6m–3y)</span><strong>${fmtNum(v.implied_upside_pct, "%", 1)}</strong></div>
+        <div class="metric-item"><span>Implied Upside (1m–5y)</span><strong>${fmtNum(v.implied_upside_pct, "%", 1)}</strong></div>
         <div class="metric-item"><span>Margin of Safety</span><strong>${fmtNum(v.margin_of_safety_pct, "%", 1)}</strong></div>
         <div class="metric-item"><span>P/E Ratio</span><strong>${fmtNum(v.pe_ratio, "x", 1)}</strong></div>
         <div class="metric-item"><span>EV / EBITDA</span><strong>${fmtNum(v.ev_to_ebitda, "x", 1)}</strong></div>

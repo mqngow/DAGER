@@ -262,7 +262,7 @@ def health_check() -> dict:
     return {
         "status": "ok",
         "service": "DAGER",
-        "supported_horizons": ["1m", "3m", "6m", "1y", "3y", "5y", "6m-3y"],
+        "supported_horizons": ["1m", "3m", "6m", "1y", "3y", "5y", "1m-5y"],
     }
 
 
