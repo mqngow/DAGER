@@ -217,14 +217,17 @@ class EdgarClient:
             if not table:
                 raise ValueError("S&P 500 constituents table not found on page.")
 
+            # Exclude secondary share-class duplicates (GOOG, FOX, NWS) and cap to 500
+            secondary_share_classes = {"GOOG", "FOX", "NWS"}
             tickers: List[str] = []
             for row in table.find_all("tr")[1:]:
                 cells = row.find_all(["td", "th"])
                 if cells:
                     symbol = cells[0].get_text(strip=True).upper().replace(".", "-")
-                    if symbol:
+                    if symbol and symbol not in secondary_share_classes:
                         tickers.append(symbol)
 
+            tickers = tickers[:500]
             if tickers:
                 self.sp500_tickers = set(tickers)
                 return tickers

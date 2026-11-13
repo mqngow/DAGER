@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: "Number of S&P 500 companies to evaluate (default: 503)"
+        description: "Number of S&P 500 companies to evaluate (default: 500)"
         required: false
-        default: "503"
+        default: "500"
 
 jobs:
   run-prefect-pipeline:
@@ -51,4 +51,4 @@ jobs:
           PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
           PREFECT_API_URL: ${{ secrets.PREFECT_API_URL }}
         run: |
-          python -m flows.evaluation_flow --limit ${{ github.event.inputs.limit || '503' }}
+          python -m flows.evaluation_flow --limit ${{ github.event.inputs.limit || '500' }}

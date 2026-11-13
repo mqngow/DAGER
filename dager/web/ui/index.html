@@ -937,10 +937,10 @@
     async function loadLeaderboard() {
       const tbody = document.getElementById("leaderboard-body");
       try {
-        let resp = await fetch("/api/sp500?sp500_only=true&limit=505&sort_by=score");
+        let resp = await fetch("/api/sp500?sp500_only=true&limit=500&sort_by=score");
         let rows = await resp.json();
         if (!rows.length) {
-          resp = await fetch("/api/sp500?sp500_only=false&limit=505&sort_by=score");
+          resp = await fetch("/api/sp500?sp500_only=false&limit=500&sort_by=score");
           rows = await resp.json();
         }
         renderTableRows(
@@ -1009,7 +1009,7 @@
         if (!resp.ok) return;
         const st = await resp.json();
         const cached = st.cached_count ?? 0;
-        const total = st.total_sp500 ?? 503;
+        const total = st.total_sp500 ?? 500;
 
         if (st.is_running) {
           const tickerPart = st.current_ticker ? ` · Syncing ${st.current_ticker}` : " · Syncing...";
@@ -1037,7 +1037,7 @@
       switchTab("sp500");
       banner.textContent = "Starting continuous background S&P 500 daily sync (resuming any uncached tickers)...";
       try {
-        const resp = await fetch("/api/sp500/seed?limit=503&background=true", { method: "POST" });
+        const resp = await fetch("/api/sp500/seed?limit=500&background=true", { method: "POST" });
         if (!resp.ok) {
           const err = await resp.json();
           banner.textContent = `Full S&P 500 sync failed to start: ${err.detail || resp.statusText}`;

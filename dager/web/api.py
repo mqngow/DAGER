@@ -48,7 +48,7 @@ _SYNC_TARGET_LIMIT: Optional[int] = None
 _SYNC_STATE: Dict[str, Any] = {
     "is_running": False,
     "cached_count": 0,
-    "total_sp500": 503,
+    "total_sp500": 500,
     "current_ticker": None,
     "last_error": None,
 }
@@ -121,7 +121,7 @@ def _sp500_sync_worker() -> None:
 def _start_background_sp500_sync(limit: Optional[int] = None) -> None:
     """Start or wake the daemon background worker to cache up to `limit` (or all) S&P 500 tickers."""
     global _SYNC_THREAD, _SYNC_TARGET_LIMIT
-    normalized_limit = None if (limit is None or limit >= 503) else limit
+    normalized_limit = None if (limit is None or limit >= 500) else limit
     with _SYNC_LOCK:
         _SYNC_TARGET_LIMIT = normalized_limit
         if _SYNC_THREAD is None or not _SYNC_THREAD.is_alive():
@@ -273,7 +273,7 @@ def health_check() -> dict:
 # ==============================================================================
 @app.get("/api/sp500", response_model=List[StockEvaluationReport])
 def list_sp500_evaluations(
-    limit: int = Query(default=50, ge=1, le=505, description="Max companies to return."),
+    limit: int = Query(default=50, ge=1, le=500, description="Max companies to return."),
     sp500_only: bool = Query(default=False, description="If False, includes all stored evaluations."),
     sort_by: str = Query(default="score", description="Sort order: 'score' or 'recent'."),
     horizon: Optional[str] = Query(
@@ -361,7 +361,7 @@ def get_sp500_sync_status(session: Session = Depends(get_db_session)) -> Dict[st
 
 @app.post("/api/sp500/seed", response_model=List[StockEvaluationReport])
 def seed_sp500_sample(
-    limit: int = Query(default=5, ge=1, le=503, description="Number of S&P 500 companies to evaluate."),
+    limit: int = Query(default=5, ge=1, le=500, description="Number of S&P 500 companies to evaluate."),
     background: bool = Query(default=False, description="Run batch sync asynchronously in the background worker."),
     session: Session = Depends(get_db_session),
 ) -> List[StockEvaluationReport]:
@@ -369,7 +369,7 @@ def seed_sp500_sample(
     logger.info("Web API batch seed requested (limit=%d, background=%s)", limit, background)
     if background or limit > 10:
         _start_background_sp500_sync(limit=limit)
-        return EvaluationRepo(session).list_top_evaluations(sp500_only=True, limit=505)
+        return EvaluationRepo(session).list_top_evaluations(sp500_only=True, limit=500)
 
     sample_tickers = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "BRK-B", "LLY", "AVGO", "JPM"][:limit]
     try:

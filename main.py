@@ -30,7 +30,7 @@ logger = configure_logging()
 @prefect_flow(name="dager-master-pipeline")
 def dager_master_pipeline_flow(
     ticker: Optional[str] = None,
-    limit: int = 503,
+    limit: int = 500,
     force_refresh: bool = False,
     include_transcripts: bool = False,
     use_finbert: bool = True,
@@ -94,7 +94,7 @@ def dager_master_pipeline_flow(
 def main() -> None:
     parser = argparse.ArgumentParser(description="DAGER — Master Prefect Pipeline & Web Server")
     parser.add_argument("--ticker", type=str, default=None, help="Run the Prefect pipeline for a single ticker/company.")
-    parser.add_argument("--limit", type=int, default=503, help="Number of S&P 500 companies for batch Prefect run (default: 503).")
+    parser.add_argument("--limit", type=int, default=500, help="Number of S&P 500 companies for batch Prefect run (default: 500).")
     parser.add_argument("--force-refresh", action="store_true", help="Bypass DB cache and recompute live.")
     parser.add_argument("--serve", action="store_true", help="Serve scheduled daily Prefect deployment (cron).")
     parser.add_argument("--cron", type=str, default="0 6 * * *", help="Cron schedule for --serve (default: '0 6 * * *').")
