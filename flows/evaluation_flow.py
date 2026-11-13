@@ -1,10 +1,12 @@
 ﻿"""Orchestrated Prefect workflows for Daily S&P 500 Batch & On-Demand Single-Company Evaluation."""
 
 import argparse
+import logging
 from typing import List, Optional
 from sqlalchemy.engine import Engine
 
 from dager.collectors import EdgarClient, MarketClient, NewsClient, TranscriptClient
+from dager.config import configure_logging
 from dager.core.sentiment import SentimentScorer
 from dager.pipeline import (
     check_cached_evaluation_task,
@@ -22,6 +24,9 @@ from dager.pipeline import (
 from dager.schemas.evaluation import StockEvaluationReport
 from flows.fundamentals_flow import ingest_company_fundamentals_flow  # noqa: F401
 from flows.sentiment_flow import ingest_company_sentiment_flow  # noqa: F401
+
+configure_logging()
+logger = logging.getLogger("dager.flows")
 
 
 # ==============================================================================
@@ -127,6 +132,7 @@ def daily_sp500_evaluation_flow(
             )
             reports.append(rep)
         except Exception:
+            logger.exception("Failed evaluating ticker '%s' during batch run", symbol)
             continue
 
     reports.sort(key=lambda r: r.composite_score, reverse=True)

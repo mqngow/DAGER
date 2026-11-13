@@ -1,18 +1,24 @@
 """FastAPI backend for ticker/company search, S&P 500 leaderboard, and on-demand evaluation."""
 
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
 from typing import List, Optional
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
+from dager.config import configure_logging
 from dager.schemas.evaluation import StockEvaluationReport
 from dager.storage import EvaluationRepo, get_session_factory, init_db
 from flows.evaluation_flow import (
     daily_sp500_evaluation_flow,
     evaluate_single_company_flow,
 )
+
+# Ensure `logs/dager.log` + console handlers are attached even when started directly via Uvicorn
+configure_logging()
+logger = logging.getLogger("dager.web")
 
 UI_HTML_PATH = Path(__file__).parent / "ui" / "index.html"
 
@@ -25,6 +31,7 @@ UI_HTML_PATH = Path(__file__).parent / "ui" / "index.html"
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Ensure all database tables exist when the API server boots."""
+    logger.info("DAGER FastAPI server starting up; initializing database tables.")
     init_db()
     yield
 
@@ -130,15 +137,27 @@ def evaluate_ticker_or_company(
     if not cleaned:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
+    logger.info("Web API evaluate request: query='%s', force_refresh=%s", cleaned, force_refresh)
     try:
-        return evaluate_single_company_flow(
+        rep = evaluate_single_company_flow(
             query=cleaned,
             force_refresh=force_refresh,
             include_transcripts=include_transcripts,
         )
+        logger.info(
+            "Web API evaluate success: %s (%s) | Verdict=%s | Score=%.1f | Cached=%s",
+            rep.company_name,
+            rep.ticker,
+            rep.verdict.value,
+            rep.composite_score,
+            rep.was_cached,
+        )
+        return rep
     except KeyError as exc:
+        logger.warning("Web API ticker resolution failed for '%s': %s", cleaned, exc)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("Web API evaluation error for '%s'", cleaned)
         raise HTTPException(status_code=500, detail=f"Evaluation failed for '{cleaned}': {exc}") from exc
 
 
@@ -152,4 +171,11 @@ def seed_sp500_sample(
     limit: int = Query(default=5, ge=1, le=50, description="Number of S&P 500 companies to evaluate."),
 ) -> List[StockEvaluationReport]:
     """Run the S&P 500 batch evaluation flow for `limit` companies and populate the database."""
-    return daily_sp500_evaluation_flow(limit=limit, force_refresh=False, include_transcripts=False)
+    logger.info("Web API batch seed requested (limit=%d)", limit)
+    try:
+        reports = daily_sp500_evaluation_flow(limit=limit, force_refresh=False, include_transcripts=False)
+        logger.info("Web API batch seed completed (%d companies evaluated).", len(reports))
+        return reports
+    except Exception as exc:
+        logger.exception("Web API batch seed failed (limit=%d)", limit)
+        raise HTTPException(status_code=500, detail=f"Batch seed failed: {exc}") from exc
