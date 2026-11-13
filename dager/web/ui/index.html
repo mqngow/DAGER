@@ -261,6 +261,49 @@
       cursor: pointer;
     }
 
+    /* ==========================================================================
+       Two-Tab Navigation & Scrollable Tables
+       Tab 1: S&P 500 Leaderboard (default view on page load)
+       Tab 2: Search & Recent Lookups (auto-selected on ticker search)
+       ========================================================================== */
+    .tab-bar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 18px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+    }
+
+    .tab-btn {
+      background: var(--panel);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      background: var(--accent);
+      color: #0b0f19;
+      border-color: var(--accent);
+    }
+
+    .table-scroll {
+      max-height: 600px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .table-scroll thead th {
+      position: sticky;
+      top: 0;
+      background: var(--panel);
+      z-index: 2;
+    }
+
     #status-banner {
       color: var(--accent);
       margin-bottom: 14px;
@@ -293,88 +336,138 @@
 
     <div id="status-banner"></div>
 
-    <!-- Active Single-Company Evaluation View -->
-    <div id="report-section" class="hidden">
+    <!-- Two-Tab Switcher: S&P 500 Leaderboard (Default) vs. Search & Recent Lookups -->
+    <div class="tab-bar">
+      <button id="tab-btn-sp500" class="tab-btn active" onclick="switchTab('sp500')">S&amp;P 500 Leaderboard</button>
+      <button id="tab-btn-search" class="tab-btn" onclick="switchTab('search')">Search &amp; Recent Lookups</button>
+    </div>
+
+    <!-- TAB 1: Scrollable S&P 500 Leaderboard (Shown Automatically on Open) -->
+    <div id="tab-panel-sp500">
       <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
-          <div>
-            <h2 id="rep-title" style="font-size:1.5rem;"></h2>
-            <p id="rep-meta" style="color:var(--muted); font-size:0.85rem; margin-top:4px;"></p>
-          </div>
-          <div style="text-align:right;">
-            <span id="rep-verdict" class="badge"></span>
-            <div id="rep-score" style="font-size:1.6rem; font-weight:700; margin-top:6px;"></div>
-          </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+          <div class="card-title" style="margin-bottom:0;">S&amp;P 500 Stored Evaluations (Scrollable)</div>
+          <button class="secondary" onclick="seedSample()">Seed Top S&amp;P 500 Sample</button>
         </div>
-        <p id="rep-summary" style="margin-top:14px; font-size:0.98rem;"></p>
-      </div>
-
-      <!-- Multi-Horizon Verdict Strip (1m, 3m, 6m, 1y, 3y, 5y) -->
-      <div class="card">
-        <div class="card-title">Multi-Horizon Signals (1m · 3m · 6m · 1y · 3y · 5y)</div>
-        <div id="horizon-grid" class="horizon-grid"></div>
-      </div>
-
-      <!-- Pillar 1 (Balance Sheet & Fundamentals) + Pillar 2 & 3 (Valuation & Sentiment) -->
-      <div class="grid-2">
-        <div class="card">
-          <div class="card-title">Pillar 1: SEC EDGAR Balance Sheet &amp; Fundamentals</div>
-          <div id="fund-metrics" class="metric-list"></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Pillar 2 &amp; 3: Valuation vs. Fair Value &amp; Sentiment</div>
-          <div id="val-metrics" class="metric-list"></div>
-        </div>
-      </div>
-
-      <!-- Bull Case & Bear Case Thesis -->
-      <div class="grid-2">
-        <div class="card">
-          <div class="card-title" style="color:var(--strong-buy);">Bull Case Catalysts</div>
-          <ul id="bull-list" class="thesis-list"></ul>
-        </div>
-        <div class="card">
-          <div class="card-title" style="color:var(--avoid);">Bear Case &amp; Risk Factors</div>
-          <ul id="bear-list" class="thesis-list"></ul>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Company</th>
+                <th>6m–3y Verdict</th>
+                <th>Score</th>
+                <th>1m</th>
+                <th>3m</th>
+                <th>6m</th>
+                <th>1y</th>
+                <th>3y</th>
+                <th>5y</th>
+                <th>Balance Sheet</th>
+              </tr>
+            </thead>
+            <tbody id="leaderboard-body">
+              <tr>
+                <td colspan="11" style="color:var(--muted);">Loading S&amp;P 500 evaluations...</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
 
-    <!-- Pre-Computed / Stored Leaderboard Table -->
-    <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-        <div class="card-title" style="margin-bottom:0;">Stored Evaluations Leaderboard</div>
-        <button class="secondary" onclick="seedSample()">Seed Top S&amp;P 500 Sample</button>
+    <!-- TAB 2: Active Search Result + Recent Searches History -->
+    <div id="tab-panel-search" class="hidden">
+      <!-- Active Single-Company Evaluation View -->
+      <div id="report-section" class="hidden">
+        <div class="card">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+            <div>
+              <h2 id="rep-title" style="font-size:1.5rem;"></h2>
+              <p id="rep-meta" style="color:var(--muted); font-size:0.85rem; margin-top:4px;"></p>
+            </div>
+            <div style="text-align:right;">
+              <span id="rep-verdict" class="badge"></span>
+              <div id="rep-score" style="font-size:1.6rem; font-weight:700; margin-top:6px;"></div>
+            </div>
+          </div>
+          <p id="rep-summary" style="margin-top:14px; font-size:0.98rem;"></p>
+        </div>
+
+        <!-- Multi-Horizon Verdict Strip (1m, 3m, 6m, 1y, 3y, 5y) -->
+        <div class="card">
+          <div class="card-title">Multi-Horizon Signals (1m · 3m · 6m · 1y · 3y · 5y)</div>
+          <div id="horizon-grid" class="horizon-grid"></div>
+        </div>
+
+        <!-- Pillar 1 (Balance Sheet & Fundamentals) + Pillar 2 & 3 (Valuation & Sentiment) -->
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Pillar 1: SEC EDGAR Balance Sheet &amp; Fundamentals</div>
+            <div id="fund-metrics" class="metric-list"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Pillar 2 &amp; 3: Valuation vs. Fair Value &amp; Sentiment</div>
+            <div id="val-metrics" class="metric-list"></div>
+          </div>
+        </div>
+
+        <!-- Bull Case & Bear Case Thesis -->
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title" style="color:var(--strong-buy);">Bull Case Catalysts</div>
+            <ul id="bull-list" class="thesis-list"></ul>
+          </div>
+          <div class="card">
+            <div class="card-title" style="color:var(--avoid);">Bear Case &amp; Risk Factors</div>
+            <ul id="bear-list" class="thesis-list"></ul>
+          </div>
+        </div>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Ticker</th>
-            <th>Company</th>
-            <th>1m–5y Verdict</th>
-            <th>Score</th>
-            <th>1m</th>
-            <th>3m</th>
-            <th>6m</th>
-            <th>1y</th>
-            <th>3y</th>
-            <th>5y</th>
-            <th>Balance Sheet</th>
-          </tr>
-        </thead>
-        <tbody id="leaderboard-body">
-          <tr>
-            <td colspan="11" style="color:var(--muted);">Loading stored evaluations...</td>
-          </tr>
-        </tbody>
-      </table>
+
+      <!-- Recent Searches Table -->
+      <div class="card">
+        <div class="card-title">Recent Searches &amp; Evaluations</div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Company</th>
+                <th>6m–3y Verdict</th>
+                <th>Score</th>
+                <th>1m</th>
+                <th>3m</th>
+                <th>6m</th>
+                <th>1y</th>
+                <th>3y</th>
+                <th>5y</th>
+                <th>Balance Sheet</th>
+              </tr>
+            </thead>
+            <tbody id="recent-searches-body">
+              <tr>
+                <td colspan="11" style="color:var(--muted);">Loading recent searches...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 
   <script>
     // =========================================================================
-    // Formatting & Badge Helpers
+    // Formatting, Tab Switching & Badge Helpers
     // =========================================================================
+    function switchTab(tabName) {
+      const isSp500 = tabName === "sp500";
+      document.getElementById("tab-panel-sp500").classList.toggle("hidden", !isSp500);
+      document.getElementById("tab-panel-search").classList.toggle("hidden", isSp500);
+      document.getElementById("tab-btn-sp500").classList.toggle("active", isSp500);
+      document.getElementById("tab-btn-search").classList.toggle("active", !isSp500);
+    }
+
     function verdictClass(verdict) {
       if (verdict === "Strong Buy") return "v-strong-buy";
       if (verdict === "Buy") return "v-buy";
@@ -390,14 +483,44 @@
       return (Number(decimalVal) * 100).toFixed(1) + "%";
     }
 
+    function renderTableRows(tbodyEl, rows, emptyMsg) {
+      if (!rows.length) {
+        tbodyEl.innerHTML = `<tr><td colspan="11" style="color:var(--muted);">${emptyMsg}</td></tr>`;
+        return;
+      }
+      tbodyEl.innerHTML = rows.map(r => {
+        const hs = r.horizon_signals || {};
+        const cell = (k) => hs[k] ? `<span class="badge ${verdictClass(hs[k].verdict)}">${hs[k].verdict}</span>` : "-";
+        return `
+          <tr class="clickable" onclick="runEvaluation(false, '${r.ticker}')">
+            <td><strong>${r.ticker}</strong></td>
+            <td>${r.company_name}</td>
+            <td><span class="badge ${verdictClass(r.verdict)}">${r.verdict}</span></td>
+            <td><strong>${r.composite_score.toFixed(1)}</strong></td>
+            <td>${cell("1m")}</td>
+            <td>${cell("3m")}</td>
+            <td>${cell("6m")}</td>
+            <td>${cell("1y")}</td>
+            <td>${cell("3y")}</td>
+            <td>${cell("5y")}</td>
+            <td>${r.fundamentals.balance_sheet_score.toFixed(1)}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
     // =========================================================================
     // On-Demand Evaluation Fetcher (`GET /api/evaluate/{query}`)
+    // Automatically switches to the Search & Recent Lookups tab on search.
     // =========================================================================
     async function runEvaluation(forceRefresh = false, customQuery = null) {
       const input = document.getElementById("query-input");
       const query = (customQuery || input.value).trim();
       if (!query) return;
       input.value = query;
+
+      // Move automatically to the Search & Recent Lookups tab when searching a stock
+      switchTab("search");
 
       const banner = document.getElementById("status-banner");
       banner.textContent = `Evaluating '${query}' (checking DB cache or pulling live SEC EDGAR + Market + News)...`;
@@ -414,7 +537,7 @@
         banner.textContent = rep.was_cached
           ? `Served '${rep.ticker}' instantly from database cache.`
           : `Computed '${rep.ticker}' live from SEC EDGAR, Yahoo Finance & News feeds and cached to DB.`;
-        loadLeaderboard();
+        await Promise.all([loadLeaderboard(), loadRecentSearches()]);
       } catch (e) {
         banner.textContent = `Request failed: ${e}`;
       }
@@ -491,53 +614,66 @@
     }
 
     // =========================================================================
-    // Leaderboard Loader & Batch Seeder
+    // S&P 500 Leaderboard, Recent Searches & Batch Seeder
     // =========================================================================
     async function loadLeaderboard() {
       const tbody = document.getElementById("leaderboard-body");
       try {
-        const resp = await fetch("/api/sp500?sp500_only=false&limit=50");
-        const rows = await resp.json();
+        let resp = await fetch("/api/sp500?sp500_only=true&limit=500&sort_by=score");
+        let rows = await resp.json();
         if (!rows.length) {
-          tbody.innerHTML = `<tr><td colspan="11" style="color:var(--muted);">No evaluations cached yet. Search a ticker above or click "Seed Top S&P 500 Sample".</td></tr>`;
-          return;
+          resp = await fetch("/api/sp500?sp500_only=false&limit=500&sort_by=score");
+          rows = await resp.json();
         }
-        tbody.innerHTML = rows.map(r => {
-          const hs = r.horizon_signals || {};
-          const cell = (k) => hs[k] ? `<span class="badge ${verdictClass(hs[k].verdict)}">${hs[k].verdict}</span>` : "-";
-          return `
-            <tr class="clickable" onclick="runEvaluation(false, '${r.ticker}')">
-              <td><strong>${r.ticker}</strong></td>
-              <td>${r.company_name}</td>
-              <td><span class="badge ${verdictClass(r.verdict)}">${r.verdict}</span></td>
-              <td><strong>${r.composite_score.toFixed(1)}</strong></td>
-              <td>${cell("1m")}</td>
-              <td>${cell("3m")}</td>
-              <td>${cell("6m")}</td>
-              <td>${cell("1y")}</td>
-              <td>${cell("3y")}</td>
-              <td>${cell("5y")}</td>
-              <td>${r.fundamentals.balance_sheet_score.toFixed(1)}</td>
-            </tr>
-          `;
-        }).join("");
+        renderTableRows(
+          tbody,
+          rows,
+          `No S&amp;P 500 evaluations cached yet. Click "Seed Top S&amp;P 500 Sample" or search a ticker above.`
+        );
       } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="11">Failed to load leaderboard: ${e}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="11">Failed to load S&amp;P 500 leaderboard: ${e}</td></tr>`;
+      }
+    }
+
+    async function loadRecentSearches() {
+      const tbody = document.getElementById("recent-searches-body");
+      try {
+        const resp = await fetch("/api/sp500?sp500_only=false&limit=50&sort_by=recent");
+        const rows = await resp.json();
+        renderTableRows(
+          tbody,
+          rows,
+          `No recent searches yet. Enter a ticker or company name above.`
+        );
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="11">Failed to load recent searches: ${e}</td></tr>`;
       }
     }
 
     async function seedSample() {
       const banner = document.getElementById("status-banner");
+      switchTab("sp500");
       banner.textContent = "Seeding top S&P 500 sample companies (AAPL, MSFT, NVDA) — please wait ~15s...";
-      await fetch("/api/sp500/seed?limit=3", { method: "POST" });
-      banner.textContent = "Sample S&P 500 evaluations completed and stored.";
-      loadLeaderboard();
+      try {
+        const resp = await fetch("/api/sp500/seed?limit=3", { method: "POST" });
+        if (!resp.ok) {
+          const err = await resp.json();
+          banner.textContent = `Seed failed: ${err.detail || resp.statusText}`;
+          return;
+        }
+        const seeded = await resp.json();
+        banner.textContent = `Sample S&P 500 evaluations completed and stored (${seeded.length} companies).`;
+        await Promise.all([loadLeaderboard(), loadRecentSearches()]);
+      } catch (e) {
+        banner.textContent = `Seed request failed: ${e}`;
+      }
     }
 
     document.getElementById("query-input").addEventListener("keydown", (e) => {
       if (e.key === "Enter") runEvaluation(false);
     });
     loadLeaderboard();
+    loadRecentSearches();
   </script>
 </body>
 

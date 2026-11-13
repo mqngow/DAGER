@@ -291,12 +291,18 @@ class EvaluationRepo:
         self,
         sp500_only: bool = True,
         limit: int = 50,
+        sort_by: str = "score",
     ) -> List[StockEvaluationReport]:
-        """Return the highest-ranked latest evaluations (for the S&P 500 dashboard)."""
+        """Return latest evaluations sorted by `'score'` (leaderboard) or `'recent'` (search history)."""
+        order_clauses = (
+            (desc(EvaluationResult.evaluated_at), desc(EvaluationResult.id))
+            if sort_by == "recent"
+            else (desc(EvaluationResult.composite_score), desc(EvaluationResult.evaluated_at))
+        )
         stmt = (
             select(EvaluationResult)
             .join(Company, EvaluationResult.company_id == Company.id)
-            .order_by(desc(EvaluationResult.composite_score), desc(EvaluationResult.evaluated_at))
+            .order_by(*order_clauses)
         )
         if sp500_only:
             stmt = stmt.where(Company.is_sp500.is_(True))

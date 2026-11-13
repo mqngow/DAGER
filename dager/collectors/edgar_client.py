@@ -31,6 +31,12 @@ class EdgarClient:
     TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
     WIKIPEDIA_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 
+    # Class-level shared directory caches so `EdgarClient` instances stay lightweight
+    # for Prefect parameter serialization (<512KB limit) and share SEC mappings across runs.
+    _SHARED_TICKER_TO_CIK: Dict[str, str] = {}
+    _SHARED_DIRECTORY: Dict[str, Dict[str, str]] = {}
+    _SHARED_SP500_TICKERS: set[str] = set(DEFAULT_SP500_SAMPLE)
+
     def __init__(
         self,
         user_agent: Optional[str] = None,
@@ -55,10 +61,32 @@ class EdgarClient:
             "Host": "data.sec.gov",
         }
 
-        # Internal lookup caches populated by `fetch_ticker_mapping()`
-        self.ticker_to_cik: Dict[str, str] = {}
-        self.directory: Dict[str, Dict[str, str]] = {}
-        self.sp500_tickers: set[str] = set()
+    @property
+    def ticker_to_cik(self) -> Dict[str, str]:
+        """Shared ticker-to-CIK mapping across EdgarClient instances."""
+        return EdgarClient._SHARED_TICKER_TO_CIK
+
+    @ticker_to_cik.setter
+    def ticker_to_cik(self, value: Dict[str, str]) -> None:
+        EdgarClient._SHARED_TICKER_TO_CIK = value
+
+    @property
+    def directory(self) -> Dict[str, Dict[str, str]]:
+        """Shared SEC registrant directory across EdgarClient instances."""
+        return EdgarClient._SHARED_DIRECTORY
+
+    @directory.setter
+    def directory(self, value: Dict[str, Dict[str, str]]) -> None:
+        EdgarClient._SHARED_DIRECTORY = value
+
+    @property
+    def sp500_tickers(self) -> set[str]:
+        """Shared S&P 500 ticker set across EdgarClient instances."""
+        return EdgarClient._SHARED_SP500_TICKERS
+
+    @sp500_tickers.setter
+    def sp500_tickers(self, value: set[str]) -> None:
+        EdgarClient._SHARED_SP500_TICKERS = value
 
     # ==========================================================================
     # Rate Limiting & Directory Loading

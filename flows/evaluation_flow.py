@@ -107,11 +107,6 @@ def daily_sp500_evaluation_flow(
 ) -> List[StockEvaluationReport]:
     """Run the scheduled S&P 500 batch evaluation pipeline and return ranked reports."""
     edgar = EdgarClient()
-    market = MarketClient()
-    news = NewsClient()
-    transcripts = TranscriptClient(edgar_client=edgar)
-    scorer = SentimentScorer(use_finbert=use_finbert)
-
     universe = tickers or fetch_sp500_universe_task(limit=limit, edgar_client=edgar)
     edgar.sp500_tickers.update(universe)
 
@@ -124,12 +119,10 @@ def daily_sp500_evaluation_flow(
                 include_transcripts=include_transcripts,
                 use_finbert=use_finbert,
                 engine=engine,
-                edgar_client=edgar,
-                market_client=market,
-                news_client=news,
-                transcript_client=transcripts,
-                scorer=scorer,
             )
+            if not rep.is_sp500:
+                rep = rep.model_copy(update={"is_sp500": True})
+                persist_evaluation_task(rep, engine=engine)
             reports.append(rep)
         except Exception:
             logger.exception("Failed evaluating ticker '%s' during batch run", symbol)

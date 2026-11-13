@@ -97,17 +97,18 @@ def health_check() -> dict:
 def list_sp500_evaluations(
     limit: int = Query(default=50, ge=1, le=500, description="Max companies to return."),
     sp500_only: bool = Query(default=False, description="If False, includes all stored evaluations."),
+    sort_by: str = Query(default="score", description="Sort order: 'score' or 'recent'."),
     horizon: Optional[str] = Query(
         default=None,
         description="Optional horizon key ('1m', '3m', '6m', '1y', '3y', '5y') to sort leaderboard by.",
     ),
     session: Session = Depends(get_db_session),
 ) -> List[StockEvaluationReport]:
-    """Return stored company evaluations ranked by composite or horizon-specific score."""
+    """Return stored company evaluations ranked by composite/horizon score or most recently evaluated."""
     repo = EvaluationRepo(session)
-    reports = repo.list_top_evaluations(sp500_only=sp500_only, limit=limit)
+    reports = repo.list_top_evaluations(sp500_only=sp500_only, limit=limit, sort_by=sort_by)
 
-    if horizon and horizon in ("1m", "3m", "6m", "1y", "3y", "5y"):
+    if sort_by != "recent" and horizon and horizon in ("1m", "3m", "6m", "1y", "3y", "5y"):
         reports.sort(
             key=lambda r: r.horizon_signals[horizon].score if horizon in r.horizon_signals else r.composite_score,
             reverse=True,
@@ -172,8 +173,18 @@ def seed_sp500_sample(
 ) -> List[StockEvaluationReport]:
     """Run the S&P 500 batch evaluation flow for `limit` companies and populate the database."""
     logger.info("Web API batch seed requested (limit=%d)", limit)
+    sample_tickers = (
+        ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "BRK-B", "LLY", "AVGO", "JPM"][:limit]
+        if limit <= 10
+        else None
+    )
     try:
-        reports = daily_sp500_evaluation_flow(limit=limit, force_refresh=False, include_transcripts=False)
+        reports = daily_sp500_evaluation_flow(
+            tickers=sample_tickers,
+            limit=limit,
+            force_refresh=False,
+            include_transcripts=False,
+        )
         logger.info("Web API batch seed completed (%d companies evaluated).", len(reports))
         return reports
     except Exception as exc:
