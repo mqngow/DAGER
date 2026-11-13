@@ -27,9 +27,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
     mkdir -p /app/logs && chmod -R 777 /app/logs
 
 # ==============================================================================
-# Default Web Entrypoint (Hugging Face Spaces uses port 7860)
+# Default Web Entrypoint
+# Honors cloud-injected `$PORT` (Google Cloud Run = 8080, Render = $PORT, HF = 7860).
 # ==============================================================================
-EXPOSE 7860
+EXPOSE 8080
 
-CMD ["uvicorn", "dager.web.api:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["sh", "-c", "uvicorn dager.web.api:app --host 0.0.0.0 --port ${PORT:-8080}"]
 
