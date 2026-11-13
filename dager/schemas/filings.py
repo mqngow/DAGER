@@ -3,7 +3,7 @@
 from datetime import date, datetime, timezone
 from enum import Enum
 from typing import List, Optional
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ==============================================================================
@@ -71,6 +71,14 @@ class BalanceSheetPeriod(BaseModel):
     total_liabilities: float = Field(..., description="Total liabilities.")
     stockholders_equity: float = Field(..., description="Total stockholders' equity (book value).")
     shares_outstanding: Optional[float] = Field(default=None, gt=0, description="Diluted or basic common shares outstanding.")
+
+    @field_validator("shares_outstanding", mode="before")
+    @classmethod
+    def coerce_non_positive_shares(cls, value: Optional[float]) -> Optional[float]:
+        """Treat zero or negative XBRL share counts (e.g., retired share classes) as missing (`None`)."""
+        if value is not None and float(value) <= 0:
+            return None
+        return value
 
     # --- Derived Balance Sheet Helpers ---
     @property

@@ -58,6 +58,8 @@ BALANCE_SHEET_TAGS: Dict[str, List[str]] = {
     "shares_outstanding": [
         "CommonStockSharesOutstanding",
         "EntityCommonStockSharesOutstanding",
+        "WeightedAverageNumberOfDilutedSharesOutstanding",
+        "WeightedAverageNumberOfSharesOutstandingBasic",
     ],
 }
 
@@ -85,6 +87,9 @@ def _extract_tag_by_period(
                 end_str = item.get("end")
                 val = item.get("val")
                 if form not in ("10-K", "10-Q") or not end_str or val is None:
+                    continue
+                # Skip zero/negative share counts (e.g., retired/secondary share classes)
+                if u_key == "shares" and float(val) <= 0:
                     continue
                 key = (end_str, form)
                 existing = period_map.get(key)
@@ -146,6 +151,7 @@ def parse_balance_sheets(
         fp_enum = FiscalPeriod(fp_raw) if fp_raw in FiscalPeriod._value2member_map_ else FiscalPeriod.FY
         fy_val = int(asset_fact.get("fy") or int(end_str[:4]))
         filed_str = asset_fact.get("filed")
+        raw_shares = _val("shares_outstanding")
 
         periods.append(
             BalanceSheetPeriod(
@@ -165,7 +171,7 @@ def parse_balance_sheets(
                 long_term_debt=_val("long_term_debt", 0.0) or 0.0,
                 total_liabilities=total_liabilities,
                 stockholders_equity=stockholders_equity,
-                shares_outstanding=_val("shares_outstanding"),
+                shares_outstanding=raw_shares if (raw_shares is not None and raw_shares > 0) else None,
             )
         )
 
