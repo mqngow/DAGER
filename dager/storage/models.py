@@ -165,3 +165,45 @@ class EvaluationResult(Base):
 
     company: Mapped["Company"] = relationship(back_populates="evaluations")
 
+
+# ==============================================================================
+# 6. User Account Table (`users`)
+# Stores Google-authenticated user profiles for personalized search history
+# and favorite ticker tracking.
+# ==============================================================================
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    google_sub: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    picture_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
+    last_login_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, onupdate=_utc_now)
+
+    tickers: Mapped[List["UserTicker"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+# ==============================================================================
+# 7. Per-User Saved & Favorited Tickers Table (`user_tickers`)
+# Links a `User` to tickers they have searched (`searched_at`) or marked as
+# favorites (`is_favorite`, `favorited_at`) without duplicating report payloads.
+# ==============================================================================
+class UserTicker(Base):
+    __tablename__ = "user_tickers"
+    __table_args__ = (
+        UniqueConstraint("user_id", "ticker", name="uq_user_ticker"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    ticker: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+    searched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, index=True)
+    favorited_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="tickers")
+

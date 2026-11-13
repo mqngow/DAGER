@@ -13,11 +13,14 @@ from dager.storage.models import (
     FinancialStatement,
     SentimentRecord,
     StockPrice,
+    User,
+    UserTicker,
 )
 from dager.storage.repositories import (
     CompanyRepo,
     EvaluationRepo,
     FilingRepo,
+    UserRepo,
 )
 
 __all__ = [
@@ -31,8 +34,11 @@ __all__ = [
     "StockPrice",
     "SentimentRecord",
     "EvaluationResult",
+    "User",
+    "UserTicker",
     "CompanyRepo",
     "FilingRepo",
     "EvaluationRepo",
+    "UserRepo",
 ]
 

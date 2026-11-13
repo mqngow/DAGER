@@ -86,9 +86,19 @@ class Settings(BaseSettings):
         description="Time-to-live (hours) before pre-computed S&P 500 evaluations are considered stale.",
     )
     ondemand_cache_ttl_hours: int = Field(
-        default=12,
+        default=1,
         ge=1,
         description="Time-to-live (hours) before an on-demand ticker evaluation is re-computed.",
+    )
+
+    # --- Authentication & Per-User Account Settings ---
+    google_client_id: Optional[str] = Field(
+        default=None,
+        description="Optional Google OAuth 2.0 Web Client ID for 'Sign in with Google'.",
+    )
+    auth_secret_key: str = Field(
+        default="dager-local-auth-secret-key-change-in-prod",
+        description="HMAC secret key used to sign lightweight session tokens.",
     )
 
     # --- Logging Configuration ---

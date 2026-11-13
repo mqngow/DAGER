@@ -19,6 +19,8 @@ from dager.storage.models import (
     FinancialStatement,
     SentimentRecord,
     StockPrice,
+    User,
+    UserTicker,
 )
 
 
@@ -149,35 +151,47 @@ class FilingRepo:
         return company
 
     def save_price_snapshot(self, company_id: int, snapshot: MarketPriceSnapshot) -> StockPrice:
-        """Insert a `StockPrice` snapshot row for a company."""
-        price_row = StockPrice(
-            company_id=company_id,
-            as_of=snapshot.as_of,
-            current_price=snapshot.current_price,
-            market_cap=snapshot.market_cap,
-            enterprise_value=snapshot.enterprise_value,
-            high_52w=snapshot.high_52w,
-            low_52w=snapshot.low_52w,
-            price_return_6m=snapshot.price_return_6m,
-            price_return_1y=snapshot.price_return_1y,
-            price_return_3y=snapshot.price_return_3y,
+        """Upsert the latest `StockPrice` snapshot row for a company to keep DB size bounded."""
+        stmt = (
+            select(StockPrice)
+            .where(StockPrice.company_id == company_id)
+            .order_by(desc(StockPrice.as_of), desc(StockPrice.id))
         )
-        self.session.add(price_row)
+        price_row = self.session.execute(stmt).scalars().first()
+        if price_row is None:
+            price_row = StockPrice(company_id=company_id, current_price=snapshot.current_price)
+            self.session.add(price_row)
+
+        price_row.as_of = snapshot.as_of
+        price_row.current_price = snapshot.current_price
+        price_row.market_cap = snapshot.market_cap
+        price_row.enterprise_value = snapshot.enterprise_value
+        price_row.high_52w = snapshot.high_52w
+        price_row.low_52w = snapshot.low_52w
+        price_row.price_return_6m = snapshot.price_return_6m
+        price_row.price_return_1y = snapshot.price_return_1y
+        price_row.price_return_3y = snapshot.price_return_3y
         self.session.flush()
         return price_row
 
     def save_sentiment(self, company_id: int, summary: CompanySentimentSummary) -> SentimentRecord:
-        """Insert a `SentimentRecord` row from a scored `CompanySentimentSummary`."""
-        record = SentimentRecord(
-            company_id=company_id,
-            evaluated_at=summary.evaluated_at,
-            document_count=summary.document_count,
-            weighted_polarity=summary.weighted_polarity,
-            sentiment_score_0_100=summary.sentiment_score_0_100,
-            overall_label=summary.overall_label.value,
-            summary_json=summary.model_dump(mode="json"),
+        """Upsert the latest `SentimentRecord` row for a company to keep DB size bounded."""
+        stmt = (
+            select(SentimentRecord)
+            .where(SentimentRecord.company_id == company_id)
+            .order_by(desc(SentimentRecord.evaluated_at), desc(SentimentRecord.id))
         )
-        self.session.add(record)
+        record = self.session.execute(stmt).scalars().first()
+        if record is None:
+            record = SentimentRecord(company_id=company_id)
+            self.session.add(record)
+
+        record.evaluated_at = summary.evaluated_at
+        record.document_count = summary.document_count
+        record.weighted_polarity = summary.weighted_polarity
+        record.sentiment_score_0_100 = summary.sentiment_score_0_100
+        record.overall_label = summary.overall_label.value
+        record.summary_json = summary.model_dump(mode="json")
         self.session.flush()
         return record
 
@@ -195,7 +209,7 @@ class EvaluationRepo:
         self.company_repo = CompanyRepo(session)
 
     def save_evaluation(self, report: StockEvaluationReport) -> EvaluationResult:
-        """Persist a `StockEvaluationReport` and ensure its parent `Company` exists."""
+        """Upsert a `StockEvaluationReport` for its `Company` so stored DB size stays flat."""
         company = self.company_repo.upsert(
             CompanyIdentity(
                 ticker=report.ticker,
@@ -205,21 +219,27 @@ class EvaluationRepo:
             )
         )
 
-        row = EvaluationResult(
-            company_id=company.id,
-            ticker=company.ticker,
-            evaluated_at=report.evaluated_at,
-            horizon=report.horizon.value,
-            composite_score=report.composite_score,
-            verdict=report.verdict.value,
-            fundamentals_score=report.fundamentals.pillar_score,
-            balance_sheet_score=report.fundamentals.balance_sheet_score,
-            valuation_score=report.valuation.pillar_score,
-            sentiment_score=report.sentiment_score,
-            thesis_summary=report.thesis_summary,
-            report_json=report.model_dump(mode="json"),
+        stmt = (
+            select(EvaluationResult)
+            .where(EvaluationResult.company_id == company.id)
+            .order_by(desc(EvaluationResult.evaluated_at), desc(EvaluationResult.id))
         )
-        self.session.add(row)
+        row = self.session.execute(stmt).scalars().first()
+        if row is None:
+            row = EvaluationResult(company_id=company.id, ticker=company.ticker)
+            self.session.add(row)
+
+        row.ticker = company.ticker
+        row.evaluated_at = report.evaluated_at
+        row.horizon = report.horizon.value
+        row.composite_score = report.composite_score
+        row.verdict = report.verdict.value
+        row.fundamentals_score = report.fundamentals.pillar_score
+        row.balance_sheet_score = report.fundamentals.balance_sheet_score
+        row.valuation_score = report.valuation.pillar_score
+        row.sentiment_score = report.sentiment_score
+        row.thesis_summary = report.thesis_summary
+        row.report_json = report.model_dump(mode="json")
         self.session.flush()
         return row
 
@@ -370,4 +390,150 @@ class EvaluationRepo:
             .values(is_sp500=True)
         )
         self.session.flush()
+
+    def get_latest_evaluation(self, query: str) -> Optional[StockEvaluationReport]:
+        """Return the latest stored `StockEvaluationReport` for `query` regardless of TTL."""
+        company = self.company_repo.find_by_query(query)
+        if company is None:
+            return None
+        stmt = (
+            select(EvaluationResult)
+            .where(EvaluationResult.company_id == company.id)
+            .order_by(desc(EvaluationResult.evaluated_at), desc(EvaluationResult.id))
+        )
+        latest = self.session.execute(stmt).scalars().first()
+        if latest is None:
+            return None
+        return StockEvaluationReport.model_validate(latest.report_json).model_copy(
+            update={"was_cached": True}
+        )
+
+
+# ==============================================================================
+# 4. User Account & Personal Ticker History Repository (`UserRepo`)
+# Manages Google-authenticated user profiles, per-user ticker search history,
+# and favorited ticker tracking using tiny relational rows.
+# ==============================================================================
+class UserRepo:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def upsert_user(
+        self,
+        google_sub: str,
+        email: str,
+        name: str,
+        picture_url: Optional[str] = None,
+    ) -> User:
+        """Create or update a Google-authenticated `User` profile."""
+        stmt = select(User).where(User.google_sub == google_sub)
+        user = self.session.execute(stmt).scalars().first()
+        now = datetime.now(timezone.utc)
+
+        if user is None:
+            user = User(
+                google_sub=google_sub,
+                email=email.strip().lower(),
+                name=name.strip() or email.split("@")[0],
+                picture_url=picture_url,
+                created_at=now,
+                last_login_at=now,
+            )
+            self.session.add(user)
+        else:
+            user.email = email.strip().lower()
+            user.name = name.strip() or user.name
+            if picture_url:
+                user.picture_url = picture_url
+            user.last_login_at = now
+
+        self.session.flush()
+        return user
+
+    def get_user_by_id(self, user_id: int) -> Optional[User]:
+        """Look up a `User` by primary key."""
+        stmt = select(User).where(User.id == user_id)
+        return self.session.execute(stmt).scalars().first()
+
+    def record_search(self, user_id: int, ticker: str) -> UserTicker:
+        """Save or bump `searched_at` for a ticker in the user's personal history."""
+        norm_ticker = ticker.strip().upper()
+        now = datetime.now(timezone.utc)
+        stmt = select(UserTicker).where(
+            UserTicker.user_id == user_id,
+            UserTicker.ticker == norm_ticker,
+        )
+        row = self.session.execute(stmt).scalars().first()
+        if row is None:
+            row = UserTicker(
+                user_id=user_id,
+                ticker=norm_ticker,
+                is_favorite=False,
+                searched_at=now,
+            )
+            self.session.add(row)
+        else:
+            row.searched_at = now
+
+        self.session.flush()
+        return row
+
+    def set_favorite(
+        self,
+        user_id: int,
+        ticker: str,
+        is_favorite: Optional[bool] = None,
+    ) -> UserTicker:
+        """Toggle or explicitly set favorite state for `(user_id, ticker)`."""
+        norm_ticker = ticker.strip().upper()
+        now = datetime.now(timezone.utc)
+        stmt = select(UserTicker).where(
+            UserTicker.user_id == user_id,
+            UserTicker.ticker == norm_ticker,
+        )
+        row = self.session.execute(stmt).scalars().first()
+        if row is None:
+            target_state = True if is_favorite is None else bool(is_favorite)
+            row = UserTicker(
+                user_id=user_id,
+                ticker=norm_ticker,
+                is_favorite=target_state,
+                searched_at=now,
+                favorited_at=now if target_state else None,
+            )
+            self.session.add(row)
+        else:
+            target_state = (not row.is_favorite) if is_favorite is None else bool(is_favorite)
+            row.is_favorite = target_state
+            row.favorited_at = now if target_state else None
+
+        self.session.flush()
+        return row
+
+    def list_user_tickers(
+        self,
+        user_id: int,
+        favorites_only: bool = False,
+        limit: int = 50,
+    ) -> List[UserTicker]:
+        """Return a user's tracked tickers ordered by most recently favorited or searched."""
+        stmt = select(UserTicker).where(UserTicker.user_id == user_id)
+        if favorites_only:
+            stmt = stmt.where(UserTicker.is_favorite.is_(True)).order_by(
+                desc(UserTicker.favorited_at),
+                desc(UserTicker.searched_at),
+            )
+        else:
+            stmt = stmt.order_by(desc(UserTicker.searched_at))
+        stmt = stmt.limit(limit)
+        return list(self.session.execute(stmt).scalars().all())
+
+    def get_favorite_tickers(self, user_id: int) -> List[str]:
+        """Return a sorted list of ticker symbols favorited by `user_id`."""
+        stmt = (
+            select(UserTicker.ticker)
+            .where(UserTicker.user_id == user_id, UserTicker.is_favorite.is_(True))
+            .order_by(UserTicker.ticker)
+        )
+        return list(self.session.execute(stmt).scalars().all())
 
