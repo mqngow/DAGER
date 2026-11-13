@@ -22,7 +22,7 @@ def synthesize_evaluation_task(
     sentiment: Optional[CompanySentimentSummary] = None,
     was_cached: bool = False,
 ) -> StockEvaluationReport:
-    """Compute composite 0–100 score, verdict, and 6m–3y thesis from financials and sentiment."""
+    """Compute composite 0–100 score, verdict, and 1m–5y thesis from financials and sentiment."""
     return evaluate_company(
         financials=financials,
         sentiment=sentiment,

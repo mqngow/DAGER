@@ -7,7 +7,7 @@ from dager.schemas.filings import CompanyFinancials
 
 # ==============================================================================
 # Intrinsic Fair Value Estimator (Blended DCF & Normalized Earnings Multiple)
-# Estimates per-share intrinsic value over a 6-month to 3-year horizon by
+# Estimates per-share intrinsic value over a 1-month to 5-year horizon by
 # combining:
 # 1. A 5-year Free Cash Flow (DCF) model with terminal value and net debt adjustment.
 # 2. A normalized 18x P/E (or EV/EBITDA) multiple on recent earnings.
