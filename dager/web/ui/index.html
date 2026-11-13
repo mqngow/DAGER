@@ -346,8 +346,14 @@
     <div id="tab-panel-sp500">
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
-          <div class="card-title" style="margin-bottom:0;">S&amp;P 500 Stored Evaluations (Scrollable)</div>
-          <button class="secondary" onclick="seedSample()">Seed Top S&amp;P 500 Sample</button>
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <div class="card-title" style="margin-bottom:0;">S&amp;P 500 Stored Evaluations</div>
+            <span id="sp500-sync-pill" class="badge HOLD">Checking sync...</span>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button onclick="syncFullSp500()">Sync Full S&amp;P 500 Now</button>
+            <button class="secondary" onclick="seedSample()">Seed Top S&amp;P 500 Sample</button>
+          </div>
         </div>
         <div class="table-scroll">
           <table>
@@ -619,16 +625,16 @@
     async function loadLeaderboard() {
       const tbody = document.getElementById("leaderboard-body");
       try {
-        let resp = await fetch("/api/sp500?sp500_only=true&limit=500&sort_by=score");
+        let resp = await fetch("/api/sp500?sp500_only=true&limit=505&sort_by=score");
         let rows = await resp.json();
         if (!rows.length) {
-          resp = await fetch("/api/sp500?sp500_only=false&limit=500&sort_by=score");
+          resp = await fetch("/api/sp500?sp500_only=false&limit=505&sort_by=score");
           rows = await resp.json();
         }
         renderTableRows(
           tbody,
           rows,
-          `No S&amp;P 500 evaluations cached yet. Click "Seed Top S&amp;P 500 Sample" or search a ticker above.`
+          `No S&amp;P 500 evaluations cached yet. Background sync is populating or click "Sync Full S&amp;P 500 Now".`
         );
       } catch (e) {
         tbody.innerHTML = `<tr><td colspan="11">Failed to load S&amp;P 500 leaderboard: ${e}</td></tr>`;
@@ -650,6 +656,57 @@
       }
     }
 
+    let lastKnownCachedCount = -1;
+
+    async function refreshSyncStatus() {
+      const pill = document.getElementById("sp500-sync-pill");
+      if (!pill) return;
+      try {
+        const resp = await fetch("/api/sp500/sync-status");
+        if (!resp.ok) return;
+        const st = await resp.json();
+        const cached = st.cached_count ?? 0;
+        const total = st.total_sp500 ?? 503;
+
+        if (st.is_running) {
+          const tickerPart = st.current_ticker ? ` · Syncing ${st.current_ticker}` : " · Syncing...";
+          pill.className = "badge HOLD";
+          pill.textContent = `${cached} / ${total} cached${tickerPart}`;
+        } else if (cached >= total) {
+          pill.className = "badge BUY";
+          pill.textContent = `${cached} / ${total} cached · Daily sync ready`;
+        } else {
+          pill.className = "badge HOLD";
+          pill.textContent = `${cached} / ${total} cached · Waiting next pass`;
+        }
+
+        if (lastKnownCachedCount !== -1 && cached !== lastKnownCachedCount) {
+          await Promise.all([loadLeaderboard(), loadRecentSearches()]);
+        }
+        lastKnownCachedCount = cached;
+      } catch (e) {
+        // Ignore transient polling errors
+      }
+    }
+
+    async function syncFullSp500() {
+      const banner = document.getElementById("status-banner");
+      switchTab("sp500");
+      banner.textContent = "Starting continuous background S&P 500 daily sync (resuming any uncached tickers)...";
+      try {
+        const resp = await fetch("/api/sp500/seed?limit=503&background=true", { method: "POST" });
+        if (!resp.ok) {
+          const err = await resp.json();
+          banner.textContent = `Full S&P 500 sync failed to start: ${err.detail || resp.statusText}`;
+          return;
+        }
+        banner.textContent = "Background S&P 500 sync active — leaderboard refreshes automatically every 8s as tickers complete.";
+        await Promise.all([refreshSyncStatus(), loadLeaderboard()]);
+      } catch (e) {
+        banner.textContent = `Full S&P 500 sync request failed: ${e}`;
+      }
+    }
+
     async function seedSample() {
       const banner = document.getElementById("status-banner");
       switchTab("sp500");
@@ -663,7 +720,7 @@
         }
         const seeded = await resp.json();
         banner.textContent = `Sample S&P 500 evaluations completed and stored (${seeded.length} companies).`;
-        await Promise.all([loadLeaderboard(), loadRecentSearches()]);
+        await Promise.all([refreshSyncStatus(), loadLeaderboard(), loadRecentSearches()]);
       } catch (e) {
         banner.textContent = `Seed request failed: ${e}`;
       }
@@ -674,6 +731,8 @@
     });
     loadLeaderboard();
     loadRecentSearches();
+    refreshSyncStatus();
+    setInterval(refreshSyncStatus, 8000);
   </script>
 </body>
 

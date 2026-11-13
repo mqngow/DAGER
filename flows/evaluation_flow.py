@@ -1,8 +1,8 @@
-﻿"""Orchestrated Prefect workflows for Daily S&P 500 Batch & On-Demand Single-Company Evaluation."""
+"""Orchestrated Prefect workflows for Daily S&P 500 Batch & On-Demand Single-Company Evaluation."""
 
 import argparse
 import logging
-from typing import List, Optional
+from typing import Any, Callable, List, Optional
 from sqlalchemy.engine import Engine
 
 from dager.collectors import EdgarClient, MarketClient, NewsClient, TranscriptClient
@@ -22,6 +22,7 @@ from dager.pipeline import (
     synthesize_evaluation_task,
 )
 from dager.schemas.evaluation import StockEvaluationReport
+from dager.storage import EvaluationRepo, init_db, session_scope
 from flows.fundamentals_flow import ingest_company_fundamentals_flow  # noqa: F401
 from flows.sentiment_flow import ingest_company_sentiment_flow  # noqa: F401
 
@@ -96,38 +97,137 @@ def evaluate_single_company_flow(
 # news sentiment, stores evaluations in the database, and returns the ranked
 # leaderboard sorted by `composite_score` descending.
 # ==============================================================================
+def _run_task_fn(task_obj: Any, *args: Any, **kwargs: Any) -> Any:
+    """Invoke a Prefect task's underlying `.fn` directly to avoid nested Prefect API overhead."""
+    fn = getattr(task_obj, "fn", task_obj)
+    return fn(*args, **kwargs)
+
+
+def _evaluate_ticker_fast(
+    query: str,
+    include_transcripts: bool = False,
+    use_finbert: bool = True,
+    engine: Optional[Engine] = None,
+    edgar_client: Optional[EdgarClient] = None,
+    market_client: Optional[MarketClient] = None,
+    news_client: Optional[NewsClient] = None,
+    transcript_client: Optional[TranscriptClient] = None,
+    scorer: Optional[SentimentScorer] = None,
+) -> StockEvaluationReport:
+    """Execute single-company ingestion, scoring, and persistence directly via task `.fn` calls."""
+    identity = _run_task_fn(resolve_company_task, query, edgar_client=edgar_client)
+    if not identity.is_sp500:
+        identity = identity.model_copy(update={"is_sp500": True})
+
+    financials = _run_task_fn(
+        collect_and_parse_financials_task,
+        company=identity,
+        edgar_client=edgar_client,
+        market_client=market_client,
+    )
+    _run_task_fn(persist_financials_task, financials, engine=engine)
+
+    docs = _run_task_fn(
+        collect_sentiment_documents_task,
+        company=identity,
+        include_transcripts=include_transcripts,
+        news_client=news_client,
+        transcript_client=transcript_client,
+    )
+    sentiment = _run_task_fn(
+        score_company_sentiment_task,
+        ticker=identity.ticker,
+        documents=docs,
+        use_finbert=use_finbert,
+        scorer=scorer,
+    )
+    _run_task_fn(persist_sentiment_task, identity, sentiment, engine=engine)
+
+    report = _run_task_fn(
+        synthesize_evaluation_task,
+        financials=financials,
+        sentiment=sentiment,
+        was_cached=False,
+    )
+    if not report.is_sp500:
+        report = report.model_copy(update={"is_sp500": True})
+    _run_task_fn(persist_evaluation_task, report, engine=engine)
+    return report
+
+
 @prefect_flow(name="daily-sp500-evaluation")
 def daily_sp500_evaluation_flow(
     tickers: Optional[List[str]] = None,
     limit: Optional[int] = None,
-    force_refresh: bool = True,
+    force_refresh: bool = False,
     include_transcripts: bool = False,
     use_finbert: bool = True,
     engine: Optional[Engine] = None,
+    max_passes: int = 2,
+    progress_callback: Optional[Callable[[str, int, int], None]] = None,
 ) -> List[StockEvaluationReport]:
-    """Run the scheduled S&P 500 batch evaluation pipeline and return ranked reports."""
+    """Run resumable daily S&P 500 evaluation, skipping fresh (<24h) tickers and retrying misses."""
+    init_db(engine)
+
     edgar = EdgarClient()
-    universe = tickers or fetch_sp500_universe_task(limit=limit, edgar_client=edgar)
+    market = MarketClient()
+    news = NewsClient()
+    raw_universe = tickers or _run_task_fn(fetch_sp500_universe_task, limit=limit, edgar_client=edgar)
+    universe = [t.strip().upper() for t in raw_universe if t and t.strip()]
     edgar.sp500_tickers.update(universe)
 
-    reports: List[StockEvaluationReport] = []
-    for symbol in universe:
-        try:
-            rep = evaluate_single_company_flow(
-                query=symbol,
-                force_refresh=force_refresh,
-                include_transcripts=include_transcripts,
-                use_finbert=use_finbert,
-                engine=engine,
-            )
-            if not rep.is_sp500:
-                rep = rep.model_copy(update={"is_sp500": True})
-                persist_evaluation_task(rep, engine=engine)
-            reports.append(rep)
-        except Exception:
-            logger.exception("Failed evaluating ticker '%s' during batch run", symbol)
-            continue
+    reports_by_ticker: dict[str, StockEvaluationReport] = {}
+    with session_scope(engine) as session:
+        repo = EvaluationRepo(session)
+        repo.ensure_sp500_flag(set(universe))
+        already_fresh = set() if force_refresh else repo.get_fresh_tickers()
+        for symbol in universe:
+            if symbol in already_fresh:
+                cached = repo.get_fresh_evaluation(symbol)
+                if cached is not None:
+                    reports_by_ticker[symbol] = cached
 
+    completed_tickers: set[str] = set(reports_by_ticker.keys())
+    total_count = len(universe)
+
+    for pass_num in range(1, max(1, max_passes) + 1):
+        remaining = [s for s in universe if s not in completed_tickers]
+        if not remaining:
+            break
+        logger.info(
+            "S&P 500 daily batch pass %d/%d: evaluating %d remaining of %d tickers.",
+            pass_num,
+            max_passes,
+            len(remaining),
+            total_count,
+        )
+        for symbol in remaining:
+            if progress_callback is not None:
+                progress_callback(symbol, len(completed_tickers), total_count)
+            try:
+                rep = _evaluate_ticker_fast(
+                    query=symbol,
+                    include_transcripts=include_transcripts,
+                    use_finbert=use_finbert,
+                    engine=engine,
+                    edgar_client=edgar,
+                    market_client=market,
+                    news_client=news,
+                )
+                completed_tickers.add(symbol)
+                reports_by_ticker[symbol] = rep
+                if progress_callback is not None:
+                    progress_callback(symbol, len(completed_tickers), total_count)
+            except Exception:
+                logger.exception(
+                    "Failed evaluating ticker '%s' during batch pass %d/%d",
+                    symbol,
+                    pass_num,
+                    max_passes,
+                )
+                continue
+
+    reports = list(reports_by_ticker.values())
     reports.sort(key=lambda r: r.composite_score, reverse=True)
     return reports
 

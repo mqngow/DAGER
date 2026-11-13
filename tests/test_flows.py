@@ -143,4 +143,11 @@ def test_fastapi_dashboard_and_endpoints():
     assert sp500_resp.status_code == 200
     assert isinstance(sp500_resp.json(), list)
 
+    sync_resp = client.get("/api/sp500/sync-status")
+    assert sync_resp.status_code == 200
+    sync_data = sync_resp.json()
+    for key in ("is_running", "cached_count", "total_sp500", "current_ticker", "last_error"):
+        assert key in sync_data
+    assert isinstance(sync_data["cached_count"], int)
+
 

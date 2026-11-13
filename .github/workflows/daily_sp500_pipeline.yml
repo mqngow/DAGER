@@ -13,14 +13,14 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: "Number of S&P 500 companies to evaluate (default: 50)"
+        description: "Number of S&P 500 companies to evaluate (default: 503)"
         required: false
-        default: "50"
+        default: "503"
 
 jobs:
   run-prefect-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
 
     steps:
       # 1. Check out repository code
@@ -51,4 +51,4 @@ jobs:
           PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
           PREFECT_API_URL: ${{ secrets.PREFECT_API_URL }}
         run: |
-          python -m flows.evaluation_flow --limit ${{ github.event.inputs.limit || '50' }}
+          python -m flows.evaluation_flow --limit ${{ github.event.inputs.limit || '503' }}

@@ -2,15 +2,17 @@
 
 from contextlib import asynccontextmanager
 import logging
+import os
 from pathlib import Path
-from typing import List, Optional
+import threading
+from typing import Any, Dict, List, Optional
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from dager.config import configure_logging
 from dager.schemas.evaluation import StockEvaluationReport
-from dager.storage import EvaluationRepo, get_session_factory, init_db
+from dager.storage import EvaluationRepo, get_session_factory, init_db, session_scope
 from flows.evaluation_flow import (
     daily_sp500_evaluation_flow,
     evaluate_single_company_flow,
@@ -22,6 +24,102 @@ logger = logging.getLogger("dager.web")
 
 UI_HTML_PATH = Path(__file__).parent / "ui" / "index.html"
 
+# ==============================================================================
+# Continuous Background S&P 500 Sync Worker State
+# Tracks live progress and keeps caching S&P 500 tickers daily until caught up.
+# ==============================================================================
+_SYNC_LOCK = threading.Lock()
+_SYNC_WAKE_EVENT = threading.Event()
+_SYNC_THREAD: Optional[threading.Thread] = None
+_SYNC_TARGET_LIMIT: Optional[int] = None
+_SYNC_STATE: Dict[str, Any] = {
+    "is_running": False,
+    "cached_count": 0,
+    "total_sp500": 503,
+    "current_ticker": None,
+    "last_error": None,
+}
+
+
+def _sp500_sync_worker() -> None:
+    """Daemon loop that continuously resumes S&P 500 caching until full daily coverage is reached."""
+    while True:
+        _SYNC_WAKE_EVENT.clear()
+        with _SYNC_LOCK:
+            target_limit = _SYNC_TARGET_LIMIT
+            _SYNC_STATE["is_running"] = True
+            _SYNC_STATE["last_error"] = None
+
+        try:
+            with session_scope() as session:
+                before_count = len(EvaluationRepo(session).get_fresh_tickers())
+        except Exception:
+            before_count = 0
+
+        def _on_progress(symbol: str, completed_count: int, total_count: int) -> None:
+            with _SYNC_LOCK:
+                _SYNC_STATE["current_ticker"] = symbol
+                _SYNC_STATE["cached_count"] = completed_count
+                _SYNC_STATE["total_sp500"] = total_count
+
+        try:
+            daily_sp500_evaluation_flow(
+                limit=target_limit,
+                force_refresh=False,
+                include_transcripts=False,
+                max_passes=2,
+                progress_callback=_on_progress,
+            )
+        except Exception as exc:
+            logger.exception("Background S&P 500 daily sync cycle failed.")
+            with _SYNC_LOCK:
+                _SYNC_STATE["last_error"] = str(exc)
+
+        try:
+            with session_scope() as session:
+                after_count = len(EvaluationRepo(session).get_fresh_tickers())
+        except Exception:
+            after_count = before_count
+
+        with _SYNC_LOCK:
+            _SYNC_STATE["is_running"] = False
+            _SYNC_STATE["current_ticker"] = None
+            _SYNC_STATE["cached_count"] = after_count
+            expected_total = _SYNC_STATE["total_sp500"]
+
+        # Choose next wait interval: quick retry if still incomplete and making progress,
+        # moderate backoff if stalled on rate limits/errors, or 1h check once fully cached.
+        if target_limit is not None or after_count >= expected_total:
+            sleep_seconds = 3600
+        elif after_count > before_count:
+            sleep_seconds = 60
+        else:
+            sleep_seconds = 900
+
+        logger.info(
+            "Background S&P 500 sync cycle paused (%d/%d fresh). Next check in %ds.",
+            after_count,
+            expected_total,
+            sleep_seconds,
+        )
+        _SYNC_WAKE_EVENT.wait(timeout=sleep_seconds)
+
+
+def _start_background_sp500_sync(limit: Optional[int] = None) -> None:
+    """Start or wake the daemon background worker to cache up to `limit` (or all) S&P 500 tickers."""
+    global _SYNC_THREAD, _SYNC_TARGET_LIMIT
+    normalized_limit = None if (limit is None or limit >= 503) else limit
+    with _SYNC_LOCK:
+        _SYNC_TARGET_LIMIT = normalized_limit
+        if _SYNC_THREAD is None or not _SYNC_THREAD.is_alive():
+            _SYNC_THREAD = threading.Thread(
+                target=_sp500_sync_worker,
+                name="dager-sp500-sync",
+                daemon=True,
+            )
+            _SYNC_THREAD.start()
+        _SYNC_WAKE_EVENT.set()
+
 
 # ==============================================================================
 # FastAPI Application & Database Session Dependency
@@ -30,9 +128,11 @@ UI_HTML_PATH = Path(__file__).parent / "ui" / "index.html"
 # ==============================================================================
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """Ensure all database tables exist when the API server boots."""
+    """Ensure DB tables exist and launch continuous daily S&P 500 caching on server boot."""
     logger.info("DAGER FastAPI server starting up; initializing database tables.")
     init_db()
+    if not os.getenv("PYTEST_CURRENT_TEST"):
+        _start_background_sp500_sync()
     yield
 
 
@@ -95,7 +195,7 @@ def health_check() -> dict:
 # ==============================================================================
 @app.get("/api/sp500", response_model=List[StockEvaluationReport])
 def list_sp500_evaluations(
-    limit: int = Query(default=50, ge=1, le=500, description="Max companies to return."),
+    limit: int = Query(default=50, ge=1, le=505, description="Max companies to return."),
     sp500_only: bool = Query(default=False, description="If False, includes all stored evaluations."),
     sort_by: str = Query(default="score", description="Sort order: 'score' or 'recent'."),
     horizon: Optional[str] = Query(
@@ -163,21 +263,33 @@ def evaluate_ticker_or_company(
 
 
 # ==============================================================================
-# 5. Batch Seed Endpoint (`POST /api/sp500/seed`)
-# Allows triggering a quick batch evaluation of top S&P 500 names directly from
-# the UI or API if the local database is empty.
+# 5. S&P 500 Sync Status & Batch Seed Endpoints
+# `GET /api/sp500/sync-status` reports live background S&P 500 caching progress.
+# `POST /api/sp500/seed` triggers either a quick synchronous sample (limit <= 10)
+# or wakes the background worker for full S&P 500 caching (`background=True`).
 # ==============================================================================
+@app.get("/api/sp500/sync-status")
+def get_sp500_sync_status(session: Session = Depends(get_db_session)) -> Dict[str, Any]:
+    """Return live progress for the background S&P 500 daily caching worker."""
+    fresh_count = len(EvaluationRepo(session).get_fresh_tickers())
+    with _SYNC_LOCK:
+        _SYNC_STATE["cached_count"] = fresh_count
+        return dict(_SYNC_STATE)
+
+
 @app.post("/api/sp500/seed", response_model=List[StockEvaluationReport])
 def seed_sp500_sample(
-    limit: int = Query(default=5, ge=1, le=50, description="Number of S&P 500 companies to evaluate."),
+    limit: int = Query(default=5, ge=1, le=503, description="Number of S&P 500 companies to evaluate."),
+    background: bool = Query(default=False, description="Run batch sync asynchronously in the background worker."),
+    session: Session = Depends(get_db_session),
 ) -> List[StockEvaluationReport]:
-    """Run the S&P 500 batch evaluation flow for `limit` companies and populate the database."""
-    logger.info("Web API batch seed requested (limit=%d)", limit)
-    sample_tickers = (
-        ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "BRK-B", "LLY", "AVGO", "JPM"][:limit]
-        if limit <= 10
-        else None
-    )
+    """Run S&P 500 evaluation synchronously for small samples or wake the background sync worker."""
+    logger.info("Web API batch seed requested (limit=%d, background=%s)", limit, background)
+    if background or limit > 10:
+        _start_background_sp500_sync(limit=limit)
+        return EvaluationRepo(session).list_top_evaluations(sp500_only=True, limit=505)
+
+    sample_tickers = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "BRK-B", "LLY", "AVGO", "JPM"][:limit]
     try:
         reports = daily_sp500_evaluation_flow(
             tickers=sample_tickers,

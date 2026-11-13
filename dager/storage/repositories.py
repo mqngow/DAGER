@@ -1,8 +1,8 @@
-﻿"""CRUD & cache-lookup repositories (`CompanyRepo`, `FilingRepo`, `EvaluationRepo`)."""
+"""CRUD & cache-lookup repositories (`CompanyRepo`, `FilingRepo`, `EvaluationRepo`)."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Callable, List, Optional
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, or_, select, update
 from sqlalchemy.orm import Session
 
 from dager.config import settings
@@ -324,4 +324,50 @@ class EvaluationRepo:
                 break
 
         return results
+
+    def get_fresh_tickers(
+        self,
+        ttl_hours: Optional[int] = None,
+        reference_time: Optional[datetime] = None,
+        sp500_only: bool = True,
+    ) -> set[str]:
+        """Return tickers that already have a cached evaluation within the TTL window."""
+        ttl = ttl_hours if ttl_hours is not None else settings.sp500_cache_ttl_hours
+        now = reference_time or datetime.now(timezone.utc)
+        cutoff = now - timedelta(hours=ttl)
+
+        stmt = select(EvaluationResult.ticker, EvaluationResult.evaluated_at)
+        if sp500_only:
+            stmt = stmt.join(Company, EvaluationResult.company_id == Company.id).where(
+                Company.is_sp500.is_(True)
+            )
+
+        rows = self.session.execute(stmt).all()
+        fresh: set[str] = set()
+        for ticker, evaluated_at in rows:
+            if evaluated_at is None:
+                continue
+            eval_dt = (
+                evaluated_at.astimezone(timezone.utc)
+                if evaluated_at.tzinfo
+                else evaluated_at.replace(tzinfo=timezone.utc)
+            )
+            if eval_dt >= cutoff:
+                fresh.add(ticker.upper())
+        return fresh
+
+    def ensure_sp500_flag(self, tickers: set[str]) -> None:
+        """Ensure existing Company rows in `tickers` are marked `is_sp500=True`."""
+        normalized = {t.strip().upper() for t in tickers if t and t.strip()}
+        if not normalized:
+            return
+        self.session.execute(
+            update(Company)
+            .where(
+                Company.ticker.in_(normalized),
+                or_(Company.is_sp500.is_(False), Company.is_sp500.is_(None)),
+            )
+            .values(is_sp500=True)
+        )
+        self.session.flush()
 
