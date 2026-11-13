@@ -5,6 +5,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DAGER — Multi-Horizon Investment Research Engine</title>
+  <!-- Google Identity Services SDK for optional Sign in with Google -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     /* ==========================================================================
        Theme Variables & Global Reset
@@ -311,8 +313,86 @@
       min-height: 22px;
     }
 
+    /* ==========================================================================
+       Auth Bar, Favorite Stars & Google Sign-In Modal
+       ========================================================================== */
+    .auth-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .user-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      padding: 7px 12px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      color: var(--text);
+    }
+
+    .fav-btn {
+      background: var(--panel-alt);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 7px 14px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.88rem;
+      cursor: pointer;
+    }
+
+    .fav-btn.active {
+      background: rgba(245, 158, 11, 0.16);
+      color: #fbbf24;
+      border-color: rgba(245, 158, 11, 0.55);
+    }
+
+    .fav-star {
+      background: transparent;
+      border: none;
+      padding: 2px 6px;
+      font-size: 1.15rem;
+      line-height: 1;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .fav-star.active {
+      color: #fbbf24;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(5, 8, 16, 0.78);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+      padding: 16px;
+    }
+
+    .modal-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      width: 100%;
+      max-width: 420px;
+    }
+
+    .modal-card input {
+      width: 100%;
+      margin-bottom: 12px;
+    }
+
     .hidden {
-      display: none;
+      display: none !important;
     }
   </style>
 </head>
@@ -332,14 +412,19 @@
         <button class="secondary" onclick="runEvaluation(true)"
           title="Bypass DB cache and pull fresh SEC/market data">Refresh</button>
       </div>
+      <!-- Optional Google Account Bar (S&P 500 stays visible even when signed out) -->
+      <div id="auth-container" class="auth-bar">
+        <button id="sign-in-btn" class="secondary" onclick="openSignInModal()">Sign in with Google</button>
+      </div>
     </header>
 
     <div id="status-banner"></div>
 
-    <!-- Two-Tab Switcher: S&P 500 Leaderboard (Default) vs. Search & Recent Lookups -->
+    <!-- Three-Tab Switcher: S&P 500 Leaderboard (Default), Search & Recent Lookups, Favorited Tickers -->
     <div class="tab-bar">
       <button id="tab-btn-sp500" class="tab-btn active" onclick="switchTab('sp500')">S&amp;P 500 Leaderboard</button>
       <button id="tab-btn-search" class="tab-btn" onclick="switchTab('search')">Search &amp; Recent Lookups</button>
+      <button id="tab-btn-favorites" class="tab-btn" onclick="switchTab('favorites')">&#9733; Favorited Tickers</button>
     </div>
 
     <!-- TAB 1: Scrollable S&P 500 Leaderboard (Shown Automatically on Open) -->
@@ -358,6 +443,7 @@
           <table>
             <thead>
               <tr>
+                <th>Fav</th>
                 <th>Ticker</th>
                 <th>Company</th>
                 <th>6m–3y Verdict</th>
@@ -373,7 +459,7 @@
             </thead>
             <tbody id="leaderboard-body">
               <tr>
-                <td colspan="11" style="color:var(--muted);">Loading S&amp;P 500 evaluations...</td>
+                <td colspan="12" style="color:var(--muted);">Loading S&amp;P 500 evaluations...</td>
               </tr>
             </tbody>
           </table>
@@ -381,7 +467,7 @@
       </div>
     </div>
 
-    <!-- TAB 2: Active Search Result + Recent Searches History -->
+    <!-- TAB 2: Active Search Result + Per-Account Recent Searches History -->
     <div id="tab-panel-search" class="hidden">
       <!-- Active Single-Company Evaluation View -->
       <div id="report-section" class="hidden">
@@ -391,9 +477,12 @@
               <h2 id="rep-title" style="font-size:1.5rem;"></h2>
               <p id="rep-meta" style="color:var(--muted); font-size:0.85rem; margin-top:4px;"></p>
             </div>
-            <div style="text-align:right;">
-              <span id="rep-verdict" class="badge"></span>
-              <div id="rep-score" style="font-size:1.6rem; font-weight:700; margin-top:6px;"></div>
+            <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+              <button id="rep-fav-btn" class="fav-btn" onclick="toggleFavorite(currentReportTicker)">&#9734; Favorite</button>
+              <div style="text-align:right;">
+                <span id="rep-verdict" class="badge"></span>
+                <div id="rep-score" style="font-size:1.6rem; font-weight:700; margin-top:6px;"></div>
+              </div>
             </div>
           </div>
           <p id="rep-summary" style="margin-top:14px; font-size:0.98rem;"></p>
@@ -437,6 +526,7 @@
           <table>
             <thead>
               <tr>
+                <th>Fav</th>
                 <th>Ticker</th>
                 <th>Company</th>
                 <th>6m–3y Verdict</th>
@@ -452,7 +542,42 @@
             </thead>
             <tbody id="recent-searches-body">
               <tr>
-                <td colspan="11" style="color:var(--muted);">Loading recent searches...</td>
+                <td colspan="12" style="color:var(--muted);">Loading recent searches...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: Per-Account Favorited Tickers Tracking List -->
+    <div id="tab-panel-favorites" class="hidden">
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+          <div class="card-title" style="margin-bottom:0;">Favorited Tickers Watchlist</div>
+          <span style="color:var(--muted); font-size:0.85rem;">Expired (&gt;1h) tickers refresh automatically when viewed.</span>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Fav</th>
+                <th>Ticker</th>
+                <th>Company</th>
+                <th>6m–3y Verdict</th>
+                <th>Score</th>
+                <th>1m</th>
+                <th>3m</th>
+                <th>6m</th>
+                <th>1y</th>
+                <th>3y</th>
+                <th>5y</th>
+                <th>Balance Sheet</th>
+              </tr>
+            </thead>
+            <tbody id="favorites-body">
+              <tr>
+                <td colspan="12" style="color:var(--muted);">Loading favorited tickers...</td>
               </tr>
             </tbody>
           </table>
@@ -461,16 +586,193 @@
     </div>
   </div>
 
+  <!-- Sign in with Google Modal -->
+  <div id="auth-modal" class="modal-backdrop hidden" onclick="if (event.target === this) closeSignInModal();">
+    <div class="modal-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+        <h3 style="font-size:1.15rem;">Sign in with Google</h3>
+        <button class="secondary" style="padding:6px 12px;" onclick="closeSignInModal()">Close</button>
+      </div>
+      <p style="color:var(--muted); font-size:0.88rem; margin-bottom:14px;">
+        Save your searched tickers and favorited watchlist across sessions. The S&amp;P 500 leaderboard remains accessible without signing in.
+      </p>
+      <div id="google-gsi-button" style="margin-bottom:14px;"></div>
+      <div id="google-fallback-form">
+        <input id="login-email" type="email" placeholder="Google email (e.g. you@gmail.com)" />
+        <input id="login-name" type="text" placeholder="Display name (optional)" />
+        <button style="width:100%;" onclick="submitEmailSignIn()">Continue with Google Account</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     // =========================================================================
-    // Formatting, Tab Switching & Badge Helpers
+    // Account Auth, Favorites State & Three-Tab Navigation Helpers
     // =========================================================================
+    let authToken = localStorage.getItem("dager_auth_token") || null;
+    let currentUser = null;
+    let favoriteTickers = new Set();
+    let currentReportTicker = null;
+    let authConfig = { google_client_id: null, google_oauth_enabled: false };
+
+    function authHeaders() {
+      return authToken ? { "Authorization": `Bearer ${authToken}` } : {};
+    }
+
     function switchTab(tabName) {
-      const isSp500 = tabName === "sp500";
-      document.getElementById("tab-panel-sp500").classList.toggle("hidden", !isSp500);
-      document.getElementById("tab-panel-search").classList.toggle("hidden", isSp500);
-      document.getElementById("tab-btn-sp500").classList.toggle("active", isSp500);
-      document.getElementById("tab-btn-search").classList.toggle("active", !isSp500);
+      document.getElementById("tab-panel-sp500").classList.toggle("hidden", tabName !== "sp500");
+      document.getElementById("tab-panel-search").classList.toggle("hidden", tabName !== "search");
+      document.getElementById("tab-panel-favorites").classList.toggle("hidden", tabName !== "favorites");
+      document.getElementById("tab-btn-sp500").classList.toggle("active", tabName === "sp500");
+      document.getElementById("tab-btn-search").classList.toggle("active", tabName === "search");
+      document.getElementById("tab-btn-favorites").classList.toggle("active", tabName === "favorites");
+      if (tabName === "favorites") loadFavorites();
+    }
+
+    function renderAuthHeader() {
+      const container = document.getElementById("auth-container");
+      if (currentUser) {
+        container.innerHTML = `
+          <div class="user-pill">
+            <span>${currentUser.name || currentUser.email}</span>
+            <button class="secondary" style="padding:4px 10px; font-size:0.78rem;" onclick="signOut()">Sign Out</button>
+          </div>
+        `;
+      } else {
+        container.innerHTML = `<button id="sign-in-btn" class="secondary" onclick="openSignInModal()">Sign in with Google</button>`;
+      }
+    }
+
+    function openSignInModal() {
+      document.getElementById("auth-modal").classList.remove("hidden");
+      const fallback = document.getElementById("google-fallback-form");
+      const gsiContainer = document.getElementById("google-gsi-button");
+      if (authConfig.google_oauth_enabled && window.google && google.accounts && google.accounts.id) {
+        fallback.classList.add("hidden");
+        gsiContainer.innerHTML = "";
+        google.accounts.id.initialize({
+          client_id: authConfig.google_client_id,
+          callback: handleGoogleCredentialResponse,
+        });
+        google.accounts.id.renderButton(gsiContainer, { theme: "outline", size: "large", width: 360 });
+      } else {
+        fallback.classList.remove("hidden");
+      }
+    }
+
+    function closeSignInModal() {
+      document.getElementById("auth-modal").classList.add("hidden");
+    }
+
+    async function completeAuthResponse(resp) {
+      const banner = document.getElementById("status-banner");
+      if (!resp.ok) {
+        const err = await resp.json();
+        banner.textContent = `Sign-in failed: ${err.detail || resp.statusText}`;
+        return;
+      }
+      const data = await resp.json();
+      authToken = data.token;
+      localStorage.setItem("dager_auth_token", authToken);
+      currentUser = data.user;
+      favoriteTickers = new Set(data.favorites || []);
+      renderAuthHeader();
+      updateReportFavButton();
+      closeSignInModal();
+      banner.textContent = `Signed in as ${currentUser.email}. Personal search history & favorites active.`;
+      await Promise.all([loadLeaderboard(), loadRecentSearches(), loadFavorites()]);
+    }
+
+    async function handleGoogleCredentialResponse(response) {
+      const resp = await fetch("/api/auth/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential: response.credential }),
+      });
+      await completeAuthResponse(resp);
+    }
+
+    async function submitEmailSignIn() {
+      const email = document.getElementById("login-email").value.trim();
+      const name = document.getElementById("login-name").value.trim();
+      if (!email) return;
+      const resp = await fetch("/api/auth/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, name }),
+      });
+      await completeAuthResponse(resp);
+    }
+
+    async function signOut() {
+      authToken = null;
+      currentUser = null;
+      favoriteTickers = new Set();
+      localStorage.removeItem("dager_auth_token");
+      renderAuthHeader();
+      updateReportFavButton();
+      document.getElementById("status-banner").textContent = "Signed out. S&P 500 leaderboard remains public.";
+      await Promise.all([loadLeaderboard(), loadRecentSearches(), loadFavorites()]);
+    }
+
+    async function initAuth() {
+      try {
+        const cfgResp = await fetch("/api/auth/config");
+        if (cfgResp.ok) authConfig = await cfgResp.json();
+      } catch (e) { /* Ignore config fetch errors */ }
+
+      if (authToken) {
+        try {
+          const meResp = await fetch("/api/auth/me", { headers: authHeaders() });
+          if (meResp.ok) {
+            const me = await meResp.json();
+            currentUser = me.user;
+            favoriteTickers = new Set(me.favorites || []);
+          } else {
+            authToken = null;
+            localStorage.removeItem("dager_auth_token");
+          }
+        } catch (e) { /* Ignore network failure during boot */ }
+      }
+      renderAuthHeader();
+    }
+
+    function updateReportFavButton() {
+      const btn = document.getElementById("rep-fav-btn");
+      if (!btn) return;
+      const isFav = currentReportTicker && favoriteTickers.has(currentReportTicker);
+      btn.className = isFav ? "fav-btn active" : "fav-btn";
+      btn.innerHTML = isFav ? "&#9733; Favorited" : "&#9734; Favorite";
+    }
+
+    async function toggleFavorite(ticker) {
+      if (!ticker) return;
+      const banner = document.getElementById("status-banner");
+      if (!authToken) {
+        banner.textContent = "Sign in with Google to favorite tickers and track them in your watchlist.";
+        openSignInModal();
+        return;
+      }
+      try {
+        const resp = await fetch(`/api/user/favorites/${encodeURIComponent(ticker)}`, {
+          method: "POST",
+          headers: authHeaders(),
+        });
+        if (!resp.ok) {
+          const err = await resp.json();
+          banner.textContent = `Favorite update failed: ${err.detail || resp.statusText}`;
+          return;
+        }
+        const data = await resp.json();
+        favoriteTickers = new Set(data.favorites || []);
+        updateReportFavButton();
+        banner.textContent = data.is_favorite
+          ? `Added '${data.ticker}' to Favorited Tickers.`
+          : `Removed '${data.ticker}' from Favorited Tickers.`;
+        await Promise.all([loadLeaderboard(), loadRecentSearches(), loadFavorites()]);
+      } catch (e) {
+        banner.textContent = `Favorite request failed: ${e}`;
+      }
     }
 
     function verdictClass(verdict) {
@@ -490,14 +792,20 @@
 
     function renderTableRows(tbodyEl, rows, emptyMsg) {
       if (!rows.length) {
-        tbodyEl.innerHTML = `<tr><td colspan="11" style="color:var(--muted);">${emptyMsg}</td></tr>`;
+        tbodyEl.innerHTML = `<tr><td colspan="12" style="color:var(--muted);">${emptyMsg}</td></tr>`;
         return;
       }
       tbodyEl.innerHTML = rows.map(r => {
         const hs = r.horizon_signals || {};
         const cell = (k) => hs[k] ? `<span class="badge ${verdictClass(hs[k].verdict)}">${hs[k].verdict}</span>` : "-";
+        const isFav = favoriteTickers.has(r.ticker);
         return `
           <tr class="clickable" onclick="runEvaluation(false, '${r.ticker}')">
+            <td>
+              <button class="fav-star ${isFav ? 'active' : ''}"
+                title="${isFav ? 'Unfavorite ticker' : 'Favorite ticker'}"
+                onclick="event.stopPropagation(); toggleFavorite('${r.ticker}')">${isFav ? '&#9733;' : '&#9734;'}</button>
+            </td>
             <td><strong>${r.ticker}</strong></td>
             <td>${r.company_name}</td>
             <td><span class="badge ${verdictClass(r.verdict)}">${r.verdict}</span></td>
@@ -531,7 +839,10 @@
       banner.textContent = `Evaluating '${query}' (checking DB cache or pulling live SEC EDGAR + Market + News)...`;
 
       try {
-        const resp = await fetch(`/api/evaluate/${encodeURIComponent(query)}?force_refresh=${forceRefresh}`);
+        const resp = await fetch(
+          `/api/evaluate/${encodeURIComponent(query)}?force_refresh=${forceRefresh}`,
+          { headers: authHeaders() }
+        );
         if (!resp.ok) {
           const err = await resp.json();
           banner.textContent = `Error: ${err.detail || resp.statusText}`;
@@ -542,7 +853,7 @@
         banner.textContent = rep.was_cached
           ? `Served '${rep.ticker}' instantly from database cache.`
           : `Computed '${rep.ticker}' live from SEC EDGAR, Yahoo Finance & News feeds and cached to DB.`;
-        await Promise.all([loadLeaderboard(), loadRecentSearches()]);
+        await Promise.all([loadLeaderboard(), loadRecentSearches(), loadFavorites()]);
       } catch (e) {
         banner.textContent = `Request failed: ${e}`;
       }
@@ -552,6 +863,8 @@
     // Render Single-Company Report & Multi-Horizon Cards
     // =========================================================================
     function renderReport(rep) {
+      currentReportTicker = rep.ticker;
+      updateReportFavButton();
       document.getElementById("report-section").classList.remove("hidden");
       document.getElementById("rep-title").textContent = `${rep.company_name} (${rep.ticker})`;
       document.getElementById("rep-meta").textContent =
@@ -619,7 +932,7 @@
     }
 
     // =========================================================================
-    // S&P 500 Leaderboard, Recent Searches & Batch Seeder
+    // S&P 500 Leaderboard, Per-User Recent Searches & Favorited Watchlist
     // =========================================================================
     async function loadLeaderboard() {
       const tbody = document.getElementById("leaderboard-body");
@@ -636,22 +949,53 @@
           `No S&amp;P 500 evaluations cached yet. Background sync is populating or click "Sync Full S&amp;P 500 Now".`
         );
       } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="11">Failed to load S&amp;P 500 leaderboard: ${e}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="12">Failed to load S&amp;P 500 leaderboard: ${e}</td></tr>`;
       }
     }
 
     async function loadRecentSearches() {
       const tbody = document.getElementById("recent-searches-body");
+      if (!authToken) {
+        tbody.innerHTML = `<tr><td colspan="12" style="color:var(--muted);">Sign in with Google above to save and view your personal ticker search history.</td></tr>`;
+        return;
+      }
       try {
-        const resp = await fetch("/api/sp500?sp500_only=false&limit=50&sort_by=recent");
+        const resp = await fetch("/api/user/recent", { headers: authHeaders() });
+        if (!resp.ok) {
+          tbody.innerHTML = `<tr><td colspan="12" style="color:var(--muted);">Sign in with Google above to view your personal ticker history.</td></tr>`;
+          return;
+        }
         const rows = await resp.json();
         renderTableRows(
           tbody,
           rows,
-          `No recent searches yet. Enter a ticker or company name above.`
+          `No recent searches yet for this account. Enter a ticker or company name above.`
         );
       } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="11">Failed to load recent searches: ${e}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="12">Failed to load recent searches: ${e}</td></tr>`;
+      }
+    }
+
+    async function loadFavorites() {
+      const tbody = document.getElementById("favorites-body");
+      if (!authToken) {
+        tbody.innerHTML = `<tr><td colspan="12" style="color:var(--muted);">Sign in with Google above to favorite and track tickers across sessions.</td></tr>`;
+        return;
+      }
+      try {
+        const resp = await fetch("/api/user/favorites", { headers: authHeaders() });
+        if (!resp.ok) {
+          tbody.innerHTML = `<tr><td colspan="12" style="color:var(--muted);">Sign in with Google above to view favorited tickers.</td></tr>`;
+          return;
+        }
+        const rows = await resp.json();
+        renderTableRows(
+          tbody,
+          rows,
+          `No favorited tickers yet. Click the &#9734; star on any searched or recent stock to track it here.`
+        );
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="12">Failed to load favorited tickers: ${e}</td></tr>`;
       }
     }
 
@@ -709,10 +1053,12 @@
     document.getElementById("query-input").addEventListener("keydown", (e) => {
       if (e.key === "Enter") runEvaluation(false);
     });
-    loadLeaderboard();
-    loadRecentSearches();
-    refreshSyncStatus();
-    setInterval(refreshSyncStatus, 8000);
+
+    (async () => {
+      await initAuth();
+      await Promise.all([loadLeaderboard(), loadRecentSearches(), loadFavorites(), refreshSyncStatus()]);
+      setInterval(refreshSyncStatus, 8000);
+    })();
   </script>
 </body>
 

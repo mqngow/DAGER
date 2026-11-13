@@ -150,4 +150,32 @@ def test_fastapi_dashboard_and_endpoints():
         assert key in sync_data
     assert isinstance(sync_data["cached_count"], int)
 
+    # Verify Google login fallback, profile endpoint, and favorite ticker watchlist
+    login_resp = client.post(
+        "/api/auth/google",
+        json={"email": "student@example.com", "name": "Student User"},
+    )
+    assert login_resp.status_code == 200
+    login_data = login_resp.json()
+    assert login_data["user"]["email"] == "student@example.com"
+    assert login_data["token"]
+
+    auth_headers = {"Authorization": f"Bearer {login_data['token']}"}
+    me_resp = client.get("/api/auth/me", headers=auth_headers)
+    assert me_resp.status_code == 200
+    assert me_resp.json()["user"]["name"] == "Student User"
+
+    fav_resp = client.post("/api/user/favorites/AAPL", headers=auth_headers)
+    assert fav_resp.status_code == 200
+    assert fav_resp.json()["is_favorite"] is True
+    assert "AAPL" in fav_resp.json()["favorites"]
+
+    fav_list_resp = client.get("/api/user/favorites?refresh_stale=false", headers=auth_headers)
+    assert fav_list_resp.status_code == 200
+    assert isinstance(fav_list_resp.json(), list)
+
+    recent_list_resp = client.get("/api/user/recent?refresh_stale=false", headers=auth_headers)
+    assert recent_list_resp.status_code == 200
+    assert isinstance(recent_list_resp.json(), list)
+
 
