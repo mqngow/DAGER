@@ -1,18 +1,31 @@
 """FastAPI backend for ticker/company search, S&P 500 leaderboard, and on-demand evaluation."""
 
+import base64
 from contextlib import asynccontextmanager
+import hashlib
+import hmac
+import json
 import logging
 import os
 from pathlib import Path
 import threading
 from typing import Any, Dict, List, Optional
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
+import httpx
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from dager.config import configure_logging
+from dager.config import configure_logging, settings
 from dager.schemas.evaluation import StockEvaluationReport
-from dager.storage import EvaluationRepo, get_session_factory, init_db, session_scope
+from dager.storage import (
+    EvaluationRepo,
+    User,
+    UserRepo,
+    get_session_factory,
+    init_db,
+    session_scope,
+)
 from flows.evaluation_flow import (
     daily_sp500_evaluation_flow,
     evaluate_single_company_flow,
@@ -163,6 +176,71 @@ def get_db_session():
 
 
 # ==============================================================================
+# Authentication & Session Token Helpers
+# Signs and verifies stateless HMAC-SHA256 Bearer tokens for Google-signed-in
+# users, keeping per-user session state lightweight.
+# ==============================================================================
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(val: str) -> bytes:
+    pad = "=" * (-len(val) % 4)
+    return base64.urlsafe_b64decode(val + pad)
+
+
+def _create_auth_token(user: User) -> str:
+    """Create a signed session token encoding the user's ID, Google sub, and email."""
+    payload = {"uid": user.id, "sub": user.google_sub, "email": user.email}
+    payload_b64 = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    sig = hmac.new(
+        settings.auth_secret_key.encode("utf-8"),
+        payload_b64.encode("ascii"),
+        hashlib.sha256,
+    ).digest()
+    return f"{payload_b64}.{_b64url_encode(sig)}"
+
+
+def _verify_auth_token(token: str, session: Session) -> Optional[User]:
+    """Validate an HMAC session token and return the corresponding `User`, or `None`."""
+    try:
+        payload_b64, sig_b64 = token.split(".", 1)
+        expected_sig = hmac.new(
+            settings.auth_secret_key.encode("utf-8"),
+            payload_b64.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        provided_sig = _b64url_decode(sig_b64)
+        if not hmac.compare_digest(expected_sig, provided_sig):
+            return None
+        payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+        user_id = int(payload["uid"])
+    except Exception:
+        return None
+    return UserRepo(session).get_user_by_id(user_id)
+
+
+def get_optional_user(
+    authorization: Optional[str] = Header(default=None),
+    session: Session = Depends(get_db_session),
+) -> Optional[User]:
+    """FastAPI dependency returning the signed-in `User` from `Authorization: Bearer ...`, or `None`."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        return None
+    return _verify_auth_token(token, session)
+
+
+def get_current_user(user: Optional[User] = Depends(get_optional_user)) -> User:
+    """FastAPI dependency enforcing an authenticated user session."""
+    if user is None:
+        raise HTTPException(status_code=401, detail="Sign in with Google required.")
+    return user
+
+
+# ==============================================================================
 # 1. Frontend Dashboard Route (`GET /`)
 # Serves the single-page DAGER research dashboard (`dager/web/ui/index.html`).
 # ==============================================================================
@@ -232,6 +310,8 @@ def evaluate_ticker_or_company(
         default=False,
         description="Include SEC 8-K/10-K/10-Q narrative excerpts in sentiment analysis.",
     ),
+    user: Optional[User] = Depends(get_optional_user),
+    session: Session = Depends(get_db_session),
 ) -> StockEvaluationReport:
     """Retrieve a cached evaluation or trigger an on-demand evaluation for any ticker or company name."""
     cleaned = query.strip()
@@ -245,6 +325,8 @@ def evaluate_ticker_or_company(
             force_refresh=force_refresh,
             include_transcripts=include_transcripts,
         )
+        if user is not None:
+            UserRepo(session).record_search(user.id, rep.ticker)
         logger.info(
             "Web API evaluate success: %s (%s) | Verdict=%s | Score=%.1f | Cached=%s",
             rep.company_name,
@@ -302,3 +384,185 @@ def seed_sp500_sample(
     except Exception as exc:
         logger.exception("Web API batch seed failed (limit=%d)", limit)
         raise HTTPException(status_code=500, detail=f"Batch seed failed: {exc}") from exc
+
+
+# ==============================================================================
+# 6. Google Sign-In, Per-User Search History & Favorites Endpoints
+# Allows optional Google account authentication (`POST /api/auth/google`),
+# returns per-user search history with automatic refresh after 1h cache expiry
+# (`GET /api/user/recent`), and manages favorite tickers (`GET/POST /api/user/favorites`).
+# ==============================================================================
+class GoogleLoginRequest(BaseModel):
+    credential: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    picture_url: Optional[str] = None
+
+
+def _serialize_user_payload(user: User, favorites: List[str]) -> Dict[str, Any]:
+    return {
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "picture_url": user.picture_url,
+        },
+        "favorites": favorites,
+    }
+
+
+@app.get("/api/auth/config")
+def get_auth_config() -> Dict[str, Any]:
+    """Return Google OAuth Client ID configuration for the dashboard Sign-In widget."""
+    return {
+        "google_client_id": settings.google_client_id,
+        "google_oauth_enabled": bool(settings.google_client_id),
+    }
+
+
+@app.post("/api/auth/google")
+def login_with_google(
+    req: GoogleLoginRequest,
+    session: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """Verify a Google ID token (or local Google email fallback) and issue a signed session token."""
+    if req.credential:
+        try:
+            resp = httpx.get(
+                "https://oauth2.googleapis.com/tokeninfo",
+                params={"id_token": req.credential},
+                timeout=10.0,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Google token verification failed: {exc}") from exc
+
+        if resp.status_code != 200:
+            raise HTTPException(status_code=401, detail="Invalid Google ID token.")
+        token_info = resp.json()
+        if settings.google_client_id and token_info.get("aud") != settings.google_client_id:
+            raise HTTPException(status_code=401, detail="Google token audience mismatch.")
+
+        google_sub = token_info.get("sub")
+        email = token_info.get("email")
+        if not google_sub or not email:
+            raise HTTPException(status_code=401, detail="Google token missing subject or email.")
+        name = token_info.get("name") or email.split("@")[0]
+        picture_url = token_info.get("picture")
+    elif req.email and req.email.strip():
+        if settings.google_client_id:
+            raise HTTPException(status_code=400, detail="Google credential token is required when OAuth is enabled.")
+        email = req.email.strip().lower()
+        google_sub = f"google:{email}"
+        name = (req.name or "").strip() or email.split("@")[0]
+        picture_url = req.picture_url
+    else:
+        raise HTTPException(status_code=400, detail="Provide a Google credential or email address.")
+
+    user_repo = UserRepo(session)
+    user = user_repo.upsert_user(
+        google_sub=google_sub,
+        email=email,
+        name=name,
+        picture_url=picture_url,
+    )
+    favorites = user_repo.get_favorite_tickers(user.id)
+    payload = _serialize_user_payload(user, favorites)
+    payload["token"] = _create_auth_token(user)
+    return payload
+
+
+@app.get("/api/auth/me")
+def get_signed_in_profile(
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """Return the signed-in user's profile and favorited ticker symbols."""
+    favorites = UserRepo(session).get_favorite_tickers(user.id)
+    return _serialize_user_payload(user, favorites)
+
+
+def _resolve_user_ticker_reports(
+    tickers: List[str],
+    session: Session,
+    refresh_stale: bool = True,
+) -> List[StockEvaluationReport]:
+    """Load fresh cached reports or re-evaluate stale (>1h) user tickers up to 3 per request."""
+    eval_repo = EvaluationRepo(session)
+    results: List[StockEvaluationReport] = []
+    recomputed_count = 0
+
+    for ticker in tickers:
+        fresh = eval_repo.get_fresh_evaluation(ticker)
+        if fresh is not None:
+            results.append(fresh)
+            continue
+
+        if refresh_stale and recomputed_count < 3:
+            try:
+                recomputed = evaluate_single_company_flow(
+                    query=ticker,
+                    force_refresh=True,
+                    include_transcripts=False,
+                )
+                recomputed_count += 1
+                results.append(recomputed)
+                continue
+            except Exception:
+                logger.exception("Failed refreshing expired user ticker '%s'", ticker)
+
+        fallback = eval_repo.get_latest_evaluation(ticker)
+        if fallback is not None:
+            results.append(fallback)
+
+    return results
+
+
+@app.get("/api/user/recent", response_model=List[StockEvaluationReport])
+def get_user_recent_tickers(
+    limit: int = Query(default=50, ge=1, le=200, description="Max recent tickers for signed-in user."),
+    refresh_stale: bool = Query(default=True, description="Automatically re-evaluate stale (>1h) tickers."),
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> List[StockEvaluationReport]:
+    """Return evaluation reports for tickers saved in the signed-in user's search history."""
+    rows = UserRepo(session).list_user_tickers(user.id, favorites_only=False, limit=limit)
+    tickers = [r.ticker for r in rows]
+    return _resolve_user_ticker_reports(tickers, session, refresh_stale=refresh_stale)
+
+
+@app.get("/api/user/favorites", response_model=List[StockEvaluationReport])
+def get_user_favorite_tickers(
+    limit: int = Query(default=100, ge=1, le=200, description="Max favorited tickers to return."),
+    refresh_stale: bool = Query(default=True, description="Automatically re-evaluate stale (>1h) favorites."),
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> List[StockEvaluationReport]:
+    """Return evaluation reports for tickers favorited by the signed-in user."""
+    rows = UserRepo(session).list_user_tickers(user.id, favorites_only=True, limit=limit)
+    tickers = [r.ticker for r in rows]
+    return _resolve_user_ticker_reports(tickers, session, refresh_stale=refresh_stale)
+
+
+@app.post("/api/user/favorites/{ticker}")
+def toggle_user_favorite_ticker(
+    ticker: str,
+    is_favorite: Optional[bool] = Query(
+        default=None,
+        description="Explicitly set favorite state (`true`/`false`), or omit to toggle.",
+    ),
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """Toggle or set favorite status for `ticker` on the signed-in user's account."""
+    cleaned = ticker.strip().upper()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Ticker cannot be empty.")
+
+    user_repo = UserRepo(session)
+    row = user_repo.set_favorite(user.id, cleaned, is_favorite=is_favorite)
+    favorites = user_repo.get_favorite_tickers(user.id)
+    return {
+        "ticker": row.ticker,
+        "is_favorite": row.is_favorite,
+        "favorites": favorites,
+    }
