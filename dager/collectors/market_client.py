@@ -54,10 +54,13 @@ class MarketClient:
         yf_ticker = yf.Ticker(symbol)
 
         # Fetch 5-year daily price history (approx. 252 trading days/year)
-        hist = yf_ticker.history(period="5y", interval="1d", auto_adjust=True)
         closes: List[float] = []
-        if hist is not None and not hist.empty and "Close" in hist:
-            closes = [float(val) for val in hist["Close"].dropna().tolist()]
+        try:
+            hist = yf_ticker.history(period="5y", interval="1d", auto_adjust=True)
+            if hist is not None and not hist.empty and "Close" in hist:
+                closes = [float(val) for val in hist["Close"].dropna().tolist()]
+        except Exception:
+            closes = []
 
         # Extract fast metadata (market cap, 52-week bounds, current price)
         info: Dict[str, Any] = {}
@@ -66,13 +69,22 @@ class MarketClient:
         except Exception:
             info = {}
 
+        # Fallback to direct Yahoo Finance v8 chart endpoint if yfinance was throttled
+        # (common on cloud container IPs like Google Cloud Run).
+        chart_meta: Dict[str, Any] = {}
+        if not closes:
+            chart_data = self._fetch_yahoo_chart_closes(symbol)
+            closes = chart_data.get("closes", [])
+            chart_meta = chart_data.get("meta", {})
+
         current_price = (
             info.get("currentPrice")
             or info.get("regularMarketPrice")
+            or chart_meta.get("regularMarketPrice")
             or (closes[-1] if closes else None)
         )
 
-        # Optional fallback to Finnhub quote endpoint if yfinance returned no price
+        # Optional fallback to Finnhub quote endpoint if Yahoo returned no price
         if not current_price and self.finnhub_api_key:
             current_price = self._fetch_finnhub_price(symbol)
 
@@ -81,8 +93,16 @@ class MarketClient:
 
         # Compute 52-week high/low from history if missing from `info`
         recent_year = closes[-252:] if len(closes) >= 252 else closes
-        high_52w = info.get("fiftyTwoWeekHigh") or (max(recent_year) if recent_year else None)
-        low_52w = info.get("fiftyTwoWeekLow") or (min(recent_year) if recent_year else None)
+        high_52w = (
+            info.get("fiftyTwoWeekHigh")
+            or chart_meta.get("fiftyTwoWeekHigh")
+            or (max(recent_year) if recent_year else None)
+        )
+        low_52w = (
+            info.get("fiftyTwoWeekLow")
+            or chart_meta.get("fiftyTwoWeekLow")
+            or (min(recent_year) if recent_year else None)
+        )
 
         return MarketPriceSnapshot(
             ticker=symbol,
@@ -140,9 +160,36 @@ class MarketClient:
         }
 
     # ==========================================================================
-    # Finnhub Quote Fallback (Optional Free API Key)
-    # Activated only if `FINNHUB_API_KEY` is configured and Yahoo Finance fails.
+    # Direct Yahoo Chart & Finnhub Fallbacks
+    # Used when `yfinance` fails or is rate-limited on cloud container IPs.
     # ==========================================================================
+    def _fetch_yahoo_chart_closes(self, symbol: str) -> Dict[str, Any]:
+        """Direct HTTP fallback to Yahoo Finance v8 chart JSON when `yfinance` fails."""
+        try:
+            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                )
+            }
+            with httpx.Client(headers=headers, timeout=12.0, follow_redirects=True) as client:
+                resp = client.get(url, params={"range": "5y", "interval": "1d"})
+                resp.raise_for_status()
+                data = resp.json()
+            result_list = data.get("chart", {}).get("result") or []
+            if not result_list:
+                return {}
+            res = result_list[0]
+            meta = res.get("meta") or {}
+            indicators = res.get("indicators") or {}
+            adj = (indicators.get("adjclose") or [{}])[0].get("adjclose")
+            raw_closes = adj or (indicators.get("quote") or [{}])[0].get("close") or []
+            closes = [float(c) for c in raw_closes if c is not None and float(c) > 0]
+            return {"closes": closes, "meta": meta}
+        except Exception:
+            return {}
+
     def _fetch_finnhub_price(self, symbol: str) -> Optional[float]:
         """Fetch latest real-time quote from Finnhub REST API (`c` = current price)."""
         if not self.finnhub_api_key:

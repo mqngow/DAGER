@@ -58,7 +58,6 @@ class EdgarClient:
         self.headers = {
             "User-Agent": self.user_agent,
             "Accept-Encoding": "gzip, deflate",
-            "Host": "data.sec.gov",
         }
 
     @property

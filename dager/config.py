@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # --- SEC EDGAR Configuration ---
     # SEC requires a descriptive User-Agent header in the format "AppName ContactEmail"
     sec_user_agent: str = Field(
-        default="DAGER-Research contact@example.com",
+        default="DAGER-Research magnuslie24@gmail.com",
         description="User-Agent string required by SEC EDGAR fair access policy.",
     )
     sec_min_interval_seconds: float = Field(

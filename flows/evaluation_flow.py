@@ -30,6 +30,12 @@ configure_logging()
 logger = logging.getLogger("dager.flows")
 
 
+def _run_task_fn(task_obj: Any, *args: Any, **kwargs: Any) -> Any:
+    """Invoke a Prefect task's underlying `.fn` directly to avoid nested Prefect API overhead."""
+    fn = getattr(task_obj, "fn", task_obj)
+    return fn(*args, **kwargs)
+
+
 # ==============================================================================
 # 1. On-Demand Single-Company Evaluation Flow (Cache-Miss Fallback)
 # Triggered when a user searches any ticker or company name:
@@ -37,7 +43,7 @@ logger = logging.getLogger("dager.flows")
 #   If a fresh evaluation exists within TTL, returns it immediately (`was_cached=True`).
 # - Step 2 (Cache Miss): Resolves company via SEC EDGAR, pulls balance sheets,
 #   income/cash flows, 5y stock prices, and news/transcripts, computes the
-#   6m–3y investment thesis, persists all records, and returns the report (`was_cached=False`).
+#   1m–5y investment thesis, persists all records, and returns the report (`was_cached=False`).
 # ==============================================================================
 @prefect_flow(name="evaluate-single-company")
 def evaluate_single_company_flow(
@@ -54,40 +60,45 @@ def evaluate_single_company_flow(
 ) -> StockEvaluationReport:
     """Evaluate any company by ticker or name, serving from cache if fresh or computing live on miss."""
     if not force_refresh:
-        cached = check_cached_evaluation_task(query, engine=engine)
+        cached = _run_task_fn(check_cached_evaluation_task, query, engine=engine)
         if cached is not None:
             return cached
 
-    # Live On-Demand Ingestion & Analysis
-    identity = resolve_company_task(query, edgar_client=edgar_client)
+    # Live On-Demand Ingestion & Analysis (invokes underlying task `.fn` directly
+    # to avoid nested Prefect server round-trips and keep responses fast).
+    identity = _run_task_fn(resolve_company_task, query, edgar_client=edgar_client)
 
-    financials = collect_and_parse_financials_task(
+    financials = _run_task_fn(
+        collect_and_parse_financials_task,
         company=identity,
         edgar_client=edgar_client,
         market_client=market_client,
     )
-    persist_financials_task(financials, engine=engine)
+    _run_task_fn(persist_financials_task, financials, engine=engine)
 
-    docs = collect_sentiment_documents_task(
+    docs = _run_task_fn(
+        collect_sentiment_documents_task,
         company=identity,
         include_transcripts=include_transcripts,
         news_client=news_client,
         transcript_client=transcript_client,
     )
-    sentiment = score_company_sentiment_task(
+    sentiment = _run_task_fn(
+        score_company_sentiment_task,
         ticker=identity.ticker,
         documents=docs,
         use_finbert=use_finbert,
         scorer=scorer,
     )
-    persist_sentiment_task(identity, sentiment, engine=engine)
+    _run_task_fn(persist_sentiment_task, identity, sentiment, engine=engine)
 
-    report = synthesize_evaluation_task(
+    report = _run_task_fn(
+        synthesize_evaluation_task,
         financials=financials,
         sentiment=sentiment,
         was_cached=False,
     )
-    persist_evaluation_task(report, engine=engine)
+    _run_task_fn(persist_evaluation_task, report, engine=engine)
     return report
 
 
@@ -97,10 +108,6 @@ def evaluate_single_company_flow(
 # news sentiment, stores evaluations in the database, and returns the ranked
 # leaderboard sorted by `composite_score` descending.
 # ==============================================================================
-def _run_task_fn(task_obj: Any, *args: Any, **kwargs: Any) -> Any:
-    """Invoke a Prefect task's underlying `.fn` directly to avoid nested Prefect API overhead."""
-    fn = getattr(task_obj, "fn", task_obj)
-    return fn(*args, **kwargs)
 
 
 def _evaluate_ticker_fast(
