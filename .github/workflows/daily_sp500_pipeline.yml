@@ -6,6 +6,10 @@
 # ==============================================================================
 name: Daily S&P 500 DAGER Pipeline
 
+# Restrict GitHub Actions GITHUB_TOKEN to read-only repository access
+permissions:
+  contents: read
+
 on:
   schedule:
     # Runs at 06:00 UTC every day

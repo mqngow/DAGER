@@ -182,3 +182,82 @@ def test_fastapi_dashboard_and_endpoints(monkeypatch):
     assert isinstance(recent_list_resp.json(), list)
 
 
+# ==============================================================================
+# Phase 7 Tests: Security Hardening Controls
+# Verifies security response headers, HttpOnly cookie lifecycle, token expiry,
+# strict ticker regex validation, admin seed gate, production fallback lock,
+# and sliding-window rate limiter behavior.
+# ==============================================================================
+def test_security_hardening_controls(monkeypatch):
+    """Verify HTTP security headers, auth/session guarantees, input validation, and admin gates."""
+    from fastapi.testclient import TestClient
+    from dager.config import settings
+    from dager.storage import User, session_scope
+    from dager.web.api import SESSION_COOKIE_NAME, _SlidingWindowRateLimiter, _create_auth_token, app
+
+    client = TestClient(app)
+
+    # 1. Browser security headers on HTML response
+    ui_resp = client.get("/")
+    assert ui_resp.status_code == 200
+    assert ui_resp.headers.get("x-content-type-options") == "nosniff"
+    assert ui_resp.headers.get("x-frame-options") == "DENY"
+    assert "default-src 'self'" in (ui_resp.headers.get("content-security-policy") or "")
+    assert ui_resp.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+
+    # 2. HttpOnly cookie auth + logout invalidation
+    monkeypatch.setattr(settings, "google_client_id", None)
+    monkeypatch.setattr(settings, "environment", "development")
+    login_resp = client.post(
+        "/api/auth/google",
+        json={"email": "security.tester@example.com", "name": "Sec Tester"},
+    )
+    assert login_resp.status_code == 200
+    assert SESSION_COOKIE_NAME in login_resp.cookies
+
+    me_cookie_resp = client.get("/api/auth/me")
+    assert me_cookie_resp.status_code == 200
+    assert me_cookie_resp.json()["user"]["email"] == "security.tester@example.com"
+
+    logout_resp = client.post("/api/auth/logout")
+    assert logout_resp.status_code == 200
+    assert client.get("/api/auth/me").status_code == 401
+
+    # 3. Expired token rejection
+    with session_scope() as s:
+        u = s.query(User).filter(User.email == "security.tester@example.com").first()
+        expired_token = _create_auth_token(u, ttl_hours=-1)
+    assert (
+        client.get("/api/auth/me", headers={"Authorization": f"Bearer {expired_token}"}).status_code
+        == 401
+    )
+
+    # 4. Strict ticker validation rejects XSS/garbage payloads
+    valid_token = login_resp.json()["token"]
+    bad_fav_resp = client.post(
+        "/api/user/favorites/<script>",
+        headers={"Authorization": f"Bearer {valid_token}"},
+    )
+    assert bad_fav_resp.status_code == 400
+
+    # 5. Admin key gate on POST /api/sp500/seed
+    monkeypatch.setattr(settings, "admin_api_key", "super-secret-admin-key")
+    assert client.post("/api/sp500/seed?limit=1").status_code == 403
+    assert client.post("/api/sp500/seed?limit=1", headers={"X-Admin-Key": "wrong"}).status_code == 403
+
+    # 6. Email-only fallback blocked in production mode
+    monkeypatch.setattr(settings, "environment", "production")
+    prod_fallback_resp = client.post(
+        "/api/auth/google",
+        json={"email": "attacker@example.com", "name": "Attacker"},
+    )
+    assert prod_fallback_resp.status_code == 400
+
+    # 7. Sliding-window rate limiter enforces request budget
+    limiter = _SlidingWindowRateLimiter(window_seconds=60)
+    assert limiter.allow("1.2.3.4", 2) is True
+    assert limiter.allow("1.2.3.4", 2) is True
+    assert limiter.allow("1.2.3.4", 2) is False
+
+
+

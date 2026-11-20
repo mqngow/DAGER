@@ -1,0 +1,17 @@
+# ==============================================================================
+# Pinned Runtime Dependencies for DAGER
+# Locks exact package versions derived from `pyproject.toml` so container and
+# CI/CD pipeline builds are reproducible and protected against supply-chain drift.
+# ==============================================================================
+httpx==0.28.1
+feedparser==6.0.14
+beautifulsoup4==4.15.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+python-dotenv==1.2.4
+yfinance==1.8.0
+sqlalchemy==2.1.6
+psycopg2-binary==2.9.13
+prefect==3.9.0
+fastapi==0.150.0
+uvicorn[standard]==0.54.0
