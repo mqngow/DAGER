@@ -456,7 +456,7 @@ class UserRepo:
         return self.session.execute(stmt).scalars().first()
 
     def record_search(self, user_id: int, ticker: str) -> UserTicker:
-        """Save or bump `searched_at` for a ticker in the user's personal history."""
+        """Save or bump `searched_at` for a ticker, bounding per-user history to `max_tickers_per_user`."""
         norm_ticker = ticker.strip().upper()
         now = datetime.now(timezone.utc)
         stmt = select(UserTicker).where(
@@ -465,6 +465,23 @@ class UserRepo:
         )
         row = self.session.execute(stmt).scalars().first()
         if row is None:
+            existing_rows = list(
+                self.session.execute(
+                    select(UserTicker)
+                    .where(UserTicker.user_id == user_id)
+                    .order_by(UserTicker.searched_at.asc(), UserTicker.id.asc())
+                )
+                .scalars()
+                .all()
+            )
+            if len(existing_rows) >= settings.max_tickers_per_user:
+                evictable = [r for r in existing_rows if not r.is_favorite]
+                overflow = (len(existing_rows) - settings.max_tickers_per_user) + 1
+                if len(evictable) < overflow:
+                    raise ValueError("Maximum saved ticker limit reached for this account.")
+                for old_row in evictable[:overflow]:
+                    self.session.delete(old_row)
+
             row = UserTicker(
                 user_id=user_id,
                 ticker=norm_ticker,
@@ -493,6 +510,14 @@ class UserRepo:
         )
         row = self.session.execute(stmt).scalars().first()
         if row is None:
+            existing_count = len(
+                self.session.execute(
+                    select(UserTicker.id).where(UserTicker.user_id == user_id)
+                ).all()
+            )
+            if existing_count >= settings.max_tickers_per_user:
+                raise ValueError("Maximum saved ticker limit reached.")
+
             target_state = True if is_favorite is None else bool(is_favorite)
             row = UserTicker(
                 user_id=user_id,

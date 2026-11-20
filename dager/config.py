@@ -23,6 +23,9 @@ if "PREFECT_API_URL" in os.environ and "app.prefect.cloud/account/" in os.enviro
     )
 
 
+DEFAULT_AUTH_SECRET_KEY = "dager-local-auth-secret-key-change-in-prod"
+
+
 # ==============================================================================
 # Application Settings Model
 # Centralizes all environment variables with type validation and sensible defaults
@@ -91,15 +94,52 @@ class Settings(BaseSettings):
         description="Time-to-live (hours) before an on-demand ticker evaluation is re-computed.",
     )
 
-    # --- Authentication & Per-User Account Settings ---
+    # --- Authentication, Security & Rate-Limiting Settings ---
     google_client_id: Optional[str] = Field(
         default=None,
         description="Optional Google OAuth 2.0 Web Client ID for 'Sign in with Google'.",
     )
     auth_secret_key: str = Field(
-        default="dager-local-auth-secret-key-change-in-prod",
+        default=DEFAULT_AUTH_SECRET_KEY,
         description="HMAC secret key used to sign lightweight session tokens.",
     )
+    auth_token_ttl_hours: int = Field(
+        default=168,
+        ge=1,
+        description="Lifetime (hours) of signed user session tokens (default: 7 days).",
+    )
+    admin_api_key: Optional[str] = Field(
+        default=None,
+        description="Optional admin secret required via X-Admin-Key header to trigger manual S&P 500 seeding.",
+    )
+    rate_limit_eval_per_minute: int = Field(
+        default=15,
+        ge=1,
+        description="Maximum /api/evaluate requests per minute per client IP.",
+    )
+    force_refresh_cooldown_seconds: int = Field(
+        default=300,
+        ge=0,
+        description="Cooldown window (seconds) per ticker between live force_refresh recomputations.",
+    )
+    max_tickers_per_user: int = Field(
+        default=200,
+        ge=10,
+        description="Maximum saved search/favorite tickers stored per user account.",
+    )
+    db_require_ssl: bool = Field(
+        default=True,
+        description="Enforce sslmode=require for PostgreSQL connections.",
+    )
+    environment: str = Field(
+        default="development",
+        description="Runtime environment ('development' or 'production').",
+    )
+
+    @property
+    def is_production(self) -> bool:
+        """Return True when running on Cloud Run (`K_SERVICE`) or when `ENVIRONMENT=production`."""
+        return bool(os.environ.get("K_SERVICE")) or self.environment.strip().lower() == "production"
 
     # --- Logging Configuration ---
     log_level: str = Field(
