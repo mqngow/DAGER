@@ -88,10 +88,10 @@ def _sp500_sync_worker() -> None:
                 max_passes=2,
                 progress_callback=_on_progress,
             )
-        except Exception as exc:
+        except Exception:
             logger.exception("Background S&P 500 daily sync cycle failed.")
             with _SYNC_LOCK:
-                _SYNC_STATE["last_error"] = str(exc)
+                _SYNC_STATE["last_error"] = "Background sync cycle encountered an internal error."
 
         try:
             with session_scope() as session:
@@ -189,6 +189,96 @@ app = FastAPI(
     version="0.1.0",
     lifespan=_lifespan,
 )
+
+
+# ==============================================================================
+# HTTP Security Headers Middleware & Abuse Rate Limiting
+# Protects against MIME sniffing, clickjacking, XSS injection, and DoS abuse
+# on expensive SEC EDGAR / yfinance endpoints.
+# ==============================================================================
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Attach standard browser defense headers to every HTTP response."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://accounts.google.com; "
+        "style-src 'self' 'unsafe-inline' https://accounts.google.com; "
+        "frame-src https://accounts.google.com; "
+        "connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com; "
+        "img-src 'self' https: data:; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'none'"
+    )
+    if settings.is_production:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
+class _SlidingWindowRateLimiter:
+    """Thread-safe bounded sliding-window rate limiter keyed by client IP."""
+
+    def __init__(self, window_seconds: int = 60, max_keys: int = 2048):
+        self.window_seconds = window_seconds
+        self.max_keys = max_keys
+        self._hits: Dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+
+    def allow(self, key: str, limit: int) -> bool:
+        now = time.monotonic()
+        cutoff = now - self.window_seconds
+        with self._lock:
+            if key not in self._hits and len(self._hits) >= self.max_keys:
+                oldest_key = next(iter(self._hits))
+                del self._hits[oldest_key]
+            bucket = self._hits.setdefault(key, deque())
+            while bucket and bucket[0] < cutoff:
+                bucket.popleft()
+            if len(bucket) >= limit:
+                return False
+            bucket.append(now)
+            return True
+
+
+_EVAL_RATE_LIMITER = _SlidingWindowRateLimiter(window_seconds=60)
+_AUTH_RATE_LIMITER = _SlidingWindowRateLimiter(window_seconds=60)
+_FORCE_REFRESH_COOLDOWN: Dict[str, float] = {}
+_FORCE_REFRESH_LOCK = threading.Lock()
+_TICKER_REGEX = re.compile(r"^[A-Z0-9][A-Z0-9.-]{0,11}$")
+
+
+def _get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+    return request.client.host if request.client else "unknown"
+
+
+def _enforce_rate_limit(limiter: _SlidingWindowRateLimiter, ip: str, limit: int) -> None:
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return
+    if not limiter.allow(ip, limit):
+        raise HTTPException(status_code=429, detail="Too many requests. Please slow down and try again.")
+
+
+def require_admin_access(
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+) -> None:
+    """Gate admin endpoints behind `ADMIN_API_KEY` (or disable in production when unset)."""
+    if settings.admin_api_key:
+        if not x_admin_key or not hmac.compare_digest(x_admin_key, settings.admin_api_key):
+            raise HTTPException(status_code=403, detail="Invalid or missing admin API key.")
+        return
+    if settings.is_production:
+        raise HTTPException(
+            status_code=403,
+            detail="Manual seeding is disabled in production without ADMIN_API_KEY.",
+        )
 
 
 def get_db_session():
@@ -357,6 +447,7 @@ def list_sp500_evaluations(
 @app.get("/api/evaluate/{query}", response_model=StockEvaluationReport)
 def evaluate_ticker_or_company(
     query: str,
+    request: Request,
     force_refresh: bool = Query(default=False, description="Bypass DB cache and recompute live."),
     include_transcripts: bool = Query(
         default=False,
@@ -366,19 +457,37 @@ def evaluate_ticker_or_company(
     session: Session = Depends(get_db_session),
 ) -> StockEvaluationReport:
     """Retrieve a cached evaluation or trigger an on-demand evaluation for any ticker or company name."""
-    cleaned = query.strip()
-    if not cleaned:
-        raise HTTPException(status_code=400, detail="Query cannot be empty.")
+    _enforce_rate_limit(_EVAL_RATE_LIMITER, _get_client_ip(request), settings.rate_limit_eval_per_minute)
 
-    logger.info("Web API evaluate request: query='%s', force_refresh=%s", cleaned, force_refresh)
+    cleaned = query.strip()
+    if not cleaned or len(cleaned) > 80 or any(ord(c) < 32 for c in cleaned):
+        raise HTTPException(status_code=400, detail="Invalid ticker or company query.")
+
+    effective_force_refresh = force_refresh
+    if force_refresh:
+        if settings.is_production and user is None:
+            raise HTTPException(status_code=401, detail="Sign in with Google required to force live refresh.")
+        cooldown_key = cleaned.upper()
+        now = time.monotonic()
+        with _FORCE_REFRESH_LOCK:
+            last_refresh = _FORCE_REFRESH_COOLDOWN.get(cooldown_key, 0.0)
+            if settings.force_refresh_cooldown_seconds > 0 and (now - last_refresh) < settings.force_refresh_cooldown_seconds:
+                effective_force_refresh = False
+            else:
+                _FORCE_REFRESH_COOLDOWN[cooldown_key] = now
+
+    logger.info("Web API evaluate request: query='%s', force_refresh=%s", cleaned, effective_force_refresh)
     try:
         rep = evaluate_single_company_flow(
             query=cleaned,
-            force_refresh=force_refresh,
+            force_refresh=effective_force_refresh,
             include_transcripts=include_transcripts,
         )
         if user is not None:
-            UserRepo(session).record_search(user.id, rep.ticker)
+            try:
+                UserRepo(session).record_search(user.id, rep.ticker)
+            except ValueError:
+                logger.warning("Skipped recording search for user %d: account ticker limit reached.", user.id)
         logger.info(
             "Web API evaluate success: %s (%s) | Verdict=%s | Score=%.1f | Cached=%s",
             rep.company_name,
@@ -390,10 +499,13 @@ def evaluate_ticker_or_company(
         return rep
     except KeyError as exc:
         logger.warning("Web API ticker resolution failed for '%s': %s", cleaned, exc)
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=f"Company or ticker '{cleaned}' was not found.") from exc
     except Exception as exc:
         logger.exception("Web API evaluation error for '%s'", cleaned)
-        raise HTTPException(status_code=500, detail=f"Evaluation failed for '{cleaned}': {exc}") from exc
+        raise HTTPException(
+            status_code=500,
+            detail="Evaluation failed due to an internal error. Please try again later.",
+        ) from exc
 
 
 # ==============================================================================
@@ -415,6 +527,7 @@ def get_sp500_sync_status(session: Session = Depends(get_db_session)) -> Dict[st
 def seed_sp500_sample(
     limit: int = Query(default=5, ge=1, le=500, description="Number of S&P 500 companies to evaluate."),
     background: bool = Query(default=False, description="Run batch sync asynchronously in the background worker."),
+    _: None = Depends(require_admin_access),
     session: Session = Depends(get_db_session),
 ) -> List[StockEvaluationReport]:
     """Run S&P 500 evaluation synchronously for small samples or wake the background sync worker."""
@@ -435,7 +548,7 @@ def seed_sp500_sample(
         return reports
     except Exception as exc:
         logger.exception("Web API batch seed failed (limit=%d)", limit)
-        raise HTTPException(status_code=500, detail=f"Batch seed failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Batch seed failed due to an internal error.") from exc
 
 
 # ==============================================================================
@@ -465,20 +578,23 @@ def _serialize_user_payload(user: User, favorites: List[str]) -> Dict[str, Any]:
 
 @app.get("/api/auth/config")
 def get_auth_config() -> Dict[str, Any]:
-    """Return Google OAuth Client ID configuration for the dashboard Sign-In widget."""
+    """Return Google OAuth Client ID and feature flags for the dashboard."""
     return {
         "google_client_id": settings.google_client_id,
         "google_oauth_enabled": bool(settings.google_client_id),
+        "admin_seed_enabled": (not settings.is_production) and (not bool(settings.admin_api_key)),
     }
 
 
 @app.post("/api/auth/google")
 def login_with_google(
     req: GoogleLoginRequest,
+    request: Request,
     response: Response,
     session: Session = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """Verify Google ID token (or local dev email fallback) and issue an HttpOnly session cookie."""
+    _enforce_rate_limit(_AUTH_RATE_LIMITER, _get_client_ip(request), 20)
     if req.credential:
         try:
             resp = httpx.get(
@@ -630,13 +746,27 @@ def toggle_user_favorite_ticker(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db_session),
 ) -> Dict[str, Any]:
-    """Toggle or set favorite status for `ticker` on the signed-in user's account."""
-    cleaned = ticker.strip().upper()
-    if not cleaned:
-        raise HTTPException(status_code=400, detail="Ticker cannot be empty.")
+    """Validate and toggle/set favorite status for `ticker` on the signed-in user's account."""
+    cleaned = ticker.strip().upper().replace(".", "-")
+    if not cleaned or not _TICKER_REGEX.match(cleaned):
+        raise HTTPException(status_code=400, detail="Invalid ticker format.")
+
+    if is_favorite is not False and CompanyRepo(session).find_by_query(cleaned) is None:
+        try:
+            resolved = EdgarClient().resolve_company(cleaned)
+            cleaned = resolved.ticker
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Unknown ticker symbol '{cleaned}'.") from exc
+        except Exception as exc:
+            logger.warning("Unable to validate ticker '%s' via SEC EDGAR: %s", cleaned, exc)
+            raise HTTPException(status_code=503, detail="Unable to verify ticker symbol right now.") from exc
 
     user_repo = UserRepo(session)
-    row = user_repo.set_favorite(user.id, cleaned, is_favorite=is_favorite)
+    try:
+        row = user_repo.set_favorite(user.id, cleaned, is_favorite=is_favorite)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     favorites = user_repo.get_favorite_tickers(user.id)
     return {
         "ticker": row.ticker,
