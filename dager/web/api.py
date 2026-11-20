@@ -1,6 +1,7 @@
 """FastAPI backend for ticker/company search, S&P 500 leaderboard, and on-demand evaluation."""
 
 import base64
+from collections import deque
 from contextlib import asynccontextmanager
 import hashlib
 import hmac
@@ -8,17 +9,21 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import threading
+import time
 from typing import Any, Dict, List, Optional
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 import httpx
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from dager.config import configure_logging, settings
+from dager.collectors import EdgarClient
+from dager.config import DEFAULT_AUTH_SECRET_KEY, configure_logging, settings
 from dager.schemas.evaluation import StockEvaluationReport
 from dager.storage import (
+    CompanyRepo,
     EvaluationRepo,
     User,
     UserRepo,
@@ -139,11 +144,37 @@ def _start_background_sp500_sync(limit: Optional[int] = None) -> None:
 # Initializes SQLite/PostgreSQL tables on startup and yields a scoped SQLAlchemy
 # session per HTTP request.
 # ==============================================================================
+_DB_INITIALIZED = False
+
+
+def _ensure_db_initialized() -> None:
+    """Initialize schema at most once per process instead of inspecting on every HTTP request."""
+    global _DB_INITIALIZED
+    if not _DB_INITIALIZED:
+        init_db()
+        _DB_INITIALIZED = True
+
+
+def _validate_production_security() -> None:
+    """Fail closed in production if default signing secrets or missing Google OAuth ID are detected."""
+    if not settings.is_production or os.getenv("PYTEST_CURRENT_TEST"):
+        return
+    if settings.auth_secret_key == DEFAULT_AUTH_SECRET_KEY or len(settings.auth_secret_key) < 32:
+        raise RuntimeError(
+            "Production startup blocked: AUTH_SECRET_KEY must be a unique >=32-character secret."
+        )
+    if not settings.google_client_id:
+        raise RuntimeError(
+            "Production startup blocked: GOOGLE_CLIENT_ID must be configured for Google Sign-In."
+        )
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """Ensure DB tables exist and launch continuous daily S&P 500 caching on server boot."""
-    logger.info("DAGER FastAPI server starting up; initializing database tables.")
-    init_db()
+    """Validate security config, initialize DB once, and start S&P 500 caching on boot."""
+    logger.info("DAGER FastAPI server starting up; validating security and database setup.")
+    _validate_production_security()
+    _ensure_db_initialized()
     if not os.getenv("PYTEST_CURRENT_TEST"):
         _start_background_sp500_sync()
     yield
@@ -162,7 +193,7 @@ app = FastAPI(
 
 def get_db_session():
     """FastAPI dependency that yields a transactional SQLAlchemy Session."""
-    init_db()
+    _ensure_db_initialized()
     factory = get_session_factory()
     session = factory()
     try:
@@ -177,9 +208,12 @@ def get_db_session():
 
 # ==============================================================================
 # Authentication & Session Token Helpers
-# Signs and verifies stateless HMAC-SHA256 Bearer tokens for Google-signed-in
-# users, keeping per-user session state lightweight.
+# Signs and verifies expiring HMAC-SHA256 session tokens stored in `HttpOnly`
+# cookies (with Bearer fallback for API clients).
 # ==============================================================================
+SESSION_COOKIE_NAME = "dager_session"
+
+
 def _b64url_encode(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
@@ -189,9 +223,17 @@ def _b64url_decode(val: str) -> bytes:
     return base64.urlsafe_b64decode(val + pad)
 
 
-def _create_auth_token(user: User) -> str:
-    """Create a signed session token encoding the user's ID, Google sub, and email."""
-    payload = {"uid": user.id, "sub": user.google_sub, "email": user.email}
+def _create_auth_token(user: User, ttl_hours: Optional[int] = None) -> str:
+    """Create a signed expiring session token (`iat`/`exp`) encoding user identity."""
+    now = int(time.time())
+    lifetime = (ttl_hours if ttl_hours is not None else settings.auth_token_ttl_hours) * 3600
+    payload = {
+        "uid": user.id,
+        "sub": user.google_sub,
+        "email": user.email,
+        "iat": now,
+        "exp": now + lifetime,
+    }
     payload_b64 = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     sig = hmac.new(
         settings.auth_secret_key.encode("utf-8"),
@@ -202,7 +244,7 @@ def _create_auth_token(user: User) -> str:
 
 
 def _verify_auth_token(token: str, session: Session) -> Optional[User]:
-    """Validate an HMAC session token and return the corresponding `User`, or `None`."""
+    """Validate HMAC signature and expiration (`exp`), returning `User` or `None`."""
     try:
         payload_b64, sig_b64 = token.split(".", 1)
         expected_sig = hmac.new(
@@ -214,6 +256,9 @@ def _verify_auth_token(token: str, session: Session) -> Optional[User]:
         if not hmac.compare_digest(expected_sig, provided_sig):
             return None
         payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+        exp = int(payload.get("exp", 0))
+        if exp <= int(time.time()):
+            return None
         user_id = int(payload["uid"])
     except Exception:
         return None
@@ -221,10 +266,17 @@ def _verify_auth_token(token: str, session: Session) -> Optional[User]:
 
 
 def get_optional_user(
+    request: Request,
     authorization: Optional[str] = Header(default=None),
     session: Session = Depends(get_db_session),
 ) -> Optional[User]:
-    """FastAPI dependency returning the signed-in `User` from `Authorization: Bearer ...`, or `None`."""
+    """Read signed-in `User` from HttpOnly cookie first, or `Authorization: Bearer ...`."""
+    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
+    if cookie_token:
+        user = _verify_auth_token(cookie_token.strip(), session)
+        if user is not None:
+            return user
+
     if not authorization or not authorization.lower().startswith("bearer "):
         return None
     token = authorization.split(" ", 1)[1].strip()
@@ -423,9 +475,10 @@ def get_auth_config() -> Dict[str, Any]:
 @app.post("/api/auth/google")
 def login_with_google(
     req: GoogleLoginRequest,
+    response: Response,
     session: Session = Depends(get_db_session),
 ) -> Dict[str, Any]:
-    """Verify a Google ID token (or local Google email fallback) and issue a signed session token."""
+    """Verify Google ID token (or local dev email fallback) and issue an HttpOnly session cookie."""
     if req.credential:
         try:
             resp = httpx.get(
@@ -434,13 +487,17 @@ def login_with_google(
                 timeout=10.0,
             )
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Google token verification failed: {exc}") from exc
+            raise HTTPException(status_code=502, detail="Google token verification failed.") from exc
 
         if resp.status_code != 200:
             raise HTTPException(status_code=401, detail="Invalid Google ID token.")
         token_info = resp.json()
         if settings.google_client_id and token_info.get("aud") != settings.google_client_id:
             raise HTTPException(status_code=401, detail="Google token audience mismatch.")
+        if token_info.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+            raise HTTPException(status_code=401, detail="Invalid Google token issuer.")
+        if token_info.get("email_verified") not in (True, "true", "True"):
+            raise HTTPException(status_code=401, detail="Google account email is not verified.")
 
         google_sub = token_info.get("sub")
         email = token_info.get("email")
@@ -449,8 +506,11 @@ def login_with_google(
         name = token_info.get("name") or email.split("@")[0]
         picture_url = token_info.get("picture")
     elif req.email and req.email.strip():
-        if settings.google_client_id:
-            raise HTTPException(status_code=400, detail="Google credential token is required when OAuth is enabled.")
+        if settings.is_production or settings.google_client_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Google credential token is required when OAuth or production mode is enabled.",
+            )
         email = req.email.strip().lower()
         google_sub = f"google:{email}"
         name = (req.name or "").strip() or email.split("@")[0]
@@ -466,9 +526,26 @@ def login_with_google(
         picture_url=picture_url,
     )
     favorites = user_repo.get_favorite_tickers(user.id)
+    token = _create_auth_token(user)
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=settings.is_production,
+        samesite="lax",
+        max_age=settings.auth_token_ttl_hours * 3600,
+        path="/",
+    )
     payload = _serialize_user_payload(user, favorites)
-    payload["token"] = _create_auth_token(user)
+    payload["token"] = token
     return payload
+
+
+@app.post("/api/auth/logout")
+def logout_session(response: Response) -> Dict[str, Any]:
+    """Clear the HttpOnly authentication cookie on sign-out."""
+    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+    return {"status": "signed_out"}
 
 
 @app.get("/api/auth/me")
