@@ -155,28 +155,49 @@ def _ensure_db_initialized() -> None:
         _DB_INITIALIZED = True
 
 
+def _is_auth_config_valid() -> bool:
+    """Return True if production auth config is complete, or True in non-production."""
+    if not settings.is_production or os.getenv("PYTEST_CURRENT_TEST"):
+        return True
+    if settings.auth_secret_key == DEFAULT_AUTH_SECRET_KEY or len(settings.auth_secret_key) < 32:
+        return False
+    if not settings.google_client_id:
+        return False
+    return True
+
+
 def _validate_production_security() -> None:
-    """Fail closed in production if default signing secrets or missing Google OAuth ID are detected."""
+    """Log critical errors if production auth secrets are missing/default without blocking $PORT bind."""
     if not settings.is_production or os.getenv("PYTEST_CURRENT_TEST"):
         return
     if settings.auth_secret_key == DEFAULT_AUTH_SECRET_KEY or len(settings.auth_secret_key) < 32:
-        raise RuntimeError(
-            "Production startup blocked: AUTH_SECRET_KEY must be a unique >=32-character secret."
+        logger.critical(
+            "Production security warning: AUTH_SECRET_KEY must be a unique >=32-character secret. "
+            "Sign-in endpoints will fail closed (503) until configured."
         )
     if not settings.google_client_id:
-        raise RuntimeError(
-            "Production startup blocked: GOOGLE_CLIENT_ID must be configured for Google Sign-In."
+        logger.critical(
+            "Production security warning: GOOGLE_CLIENT_ID is missing. "
+            "Sign-in endpoints will fail closed (503) until configured."
         )
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """Validate security config, initialize DB once, and start S&P 500 caching on boot."""
+    """Validate security config, initialize DB without blocking port bind, and start S&P 500 sync."""
     logger.info("DAGER FastAPI server starting up; validating security and database setup.")
     _validate_production_security()
-    _ensure_db_initialized()
+    try:
+        _ensure_db_initialized()
+    except Exception:
+        logger.exception(
+            "Startup database initialization failed; server will continue booting to listen on $PORT."
+        )
     if not os.getenv("PYTEST_CURRENT_TEST"):
-        _start_background_sp500_sync()
+        # Slight delay lets Uvicorn bind $PORT immediately on cold start before background sync hits DB/network.
+        timer = threading.Timer(2.0, _start_background_sp500_sync)
+        timer.daemon = True
+        timer.start()
     yield
 
 
@@ -334,7 +355,9 @@ def _create_auth_token(user: User, ttl_hours: Optional[int] = None) -> str:
 
 
 def _verify_auth_token(token: str, session: Session) -> Optional[User]:
-    """Validate HMAC signature and expiration (`exp`), returning `User` or `None`."""
+    """Validate HMAC signature and expiration (`exp`), failing closed if production secrets are invalid."""
+    if not _is_auth_config_valid():
+        return None
     try:
         payload_b64, sig_b64 = token.split(".", 1)
         expected_sig = hmac.new(
@@ -400,10 +423,12 @@ def serve_dashboard() -> HTMLResponse:
 # ==============================================================================
 @app.get("/api/health")
 def health_check() -> dict:
-    """Return service health status and supported investment horizons."""
+    """Return service health status, readiness booleans, and supported investment horizons."""
     return {
         "status": "ok",
         "service": "DAGER",
+        "db_initialized": _DB_INITIALIZED,
+        "auth_configured": _is_auth_config_valid(),
         "supported_horizons": ["1m", "3m", "6m", "1y", "3y", "5y", "1m-5y"],
     }
 
@@ -595,6 +620,11 @@ def login_with_google(
 ) -> Dict[str, Any]:
     """Verify Google ID token (or local dev email fallback) and issue an HttpOnly session cookie."""
     _enforce_rate_limit(_AUTH_RATE_LIMITER, _get_client_ip(request), 20)
+    if not _is_auth_config_valid():
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication is disabled until AUTH_SECRET_KEY and GOOGLE_CLIENT_ID are configured in production.",
+        )
     if req.credential:
         try:
             resp = httpx.get(

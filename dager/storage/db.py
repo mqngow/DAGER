@@ -1,7 +1,8 @@
 ﻿"""Database connection pools, SQLAlchemy Engine, and Session management."""
 
-import logging
 from contextlib import contextmanager
+import importlib.util
+import logging
 from typing import Generator, Optional
 from sqlalchemy import Engine, create_engine, inspect
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -39,15 +40,22 @@ def _normalize_db_url(raw_url: str) -> str:
         return "sqlite:///./dager.db"
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://") :]
+    if url.startswith("postgresql://"):
+        # SQLAlchemy 2.1 defaults bare `postgresql://` to psycopg3; fall back cleanly to psycopg2 if needed.
+        if importlib.util.find_spec("psycopg") is None and importlib.util.find_spec("psycopg2") is not None:
+            url = "postgresql+psycopg2://" + url[len("postgresql://") :]
     return url
 
 
 def _build_connect_args(url: str) -> dict:
-    """Build SQLAlchemy `connect_args` enforcing SQLite thread safety and Postgres TLS."""
+    """Build SQLAlchemy `connect_args` enforcing SQLite thread safety, Postgres TLS, and connect timeout."""
     if url.startswith("sqlite"):
         return {"check_same_thread": False}
-    if url.startswith("postgresql") and settings.db_require_ssl and "sslmode=" not in url.lower():
-        return {"sslmode": "require"}
+    if url.startswith("postgresql"):
+        args: dict = {"connect_timeout": 10}
+        if settings.db_require_ssl and "sslmode=" not in url.lower():
+            args["sslmode"] = "require"
+        return args
     return {}
 
 

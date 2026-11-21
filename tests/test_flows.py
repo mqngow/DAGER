@@ -123,12 +123,27 @@ def test_on_demand_and_batch_evaluation_flows(
 # Verifies that the dashboard HTML (`GET /`), health check (`GET /api/health`),
 # and leaderboard (`GET /api/sp500`) respond with valid HTTP 200 payloads.
 # ==============================================================================
-def test_fastapi_dashboard_and_endpoints(monkeypatch):
+def _use_isolated_sqlite_db(tmp_path, monkeypatch):
+    """Isolate FastAPI tests onto a temporary SQLite database instead of `.env` PostgreSQL."""
+    import dager.storage.db as db_mod
+    import dager.web.api as api_mod
+
+    db_file = tmp_path / "test_api_isolated.db"
+    test_engine = get_engine(f"sqlite:///{db_file}")
+    init_db(test_engine)
+    monkeypatch.setattr(db_mod, "_engine", test_engine)
+    monkeypatch.setattr(db_mod, "_SessionLocal", None)
+    monkeypatch.setattr(api_mod, "_DB_INITIALIZED", True)
+    return test_engine
+
+
+def test_fastapi_dashboard_and_endpoints(tmp_path, monkeypatch):
     """Verify FastAPI web UI and JSON API endpoints."""
     from fastapi.testclient import TestClient
     from dager.config import settings
     from dager.web.api import app
 
+    _use_isolated_sqlite_db(tmp_path, monkeypatch)
     client = TestClient(app)
 
     health_resp = client.get("/api/health")
@@ -188,13 +203,14 @@ def test_fastapi_dashboard_and_endpoints(monkeypatch):
 # strict ticker regex validation, admin seed gate, production fallback lock,
 # and sliding-window rate limiter behavior.
 # ==============================================================================
-def test_security_hardening_controls(monkeypatch):
+def test_security_hardening_controls(tmp_path, monkeypatch):
     """Verify HTTP security headers, auth/session guarantees, input validation, and admin gates."""
     from fastapi.testclient import TestClient
     from dager.config import settings
     from dager.storage import User, session_scope
     from dager.web.api import SESSION_COOKIE_NAME, _SlidingWindowRateLimiter, _create_auth_token, app
 
+    _use_isolated_sqlite_db(tmp_path, monkeypatch)
     client = TestClient(app)
 
     # 1. Browser security headers on HTML response

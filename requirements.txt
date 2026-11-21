@@ -11,6 +11,7 @@ pydantic-settings==2.15.0
 python-dotenv==1.2.4
 yfinance==1.8.0
 sqlalchemy==2.1.6
+psycopg[binary]==3.3.6
 psycopg2-binary==2.9.13
 prefect==3.9.0
 fastapi==0.150.0
