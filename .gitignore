@@ -46,6 +46,8 @@ coverage.xml
 *.db
 *.sqlite
 *.sqlite3
+sql/
+supabase_security_hardening.sql
 
 # Logs
 *.log

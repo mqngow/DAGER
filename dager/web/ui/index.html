@@ -436,7 +436,7 @@
             <span id="sp500-sync-pill" class="badge HOLD">Checking sync...</span>
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button onclick="syncFullSp500()">Sync Full S&amp;P 500 Now</button>
+            <button id="sync-full-btn" onclick="syncFullSp500()">Sync Full S&amp;P 500 Now</button>
           </div>
         </div>
         <div class="table-scroll">
@@ -607,16 +607,20 @@
 
   <script>
     // =========================================================================
-    // Account Auth, Favorites State & Three-Tab Navigation Helpers
+    // HTML Escaping, Account Auth (HttpOnly Cookies) & Navigation Helpers
     // =========================================================================
-    let authToken = localStorage.getItem("dager_auth_token") || null;
     let currentUser = null;
     let favoriteTickers = new Set();
     let currentReportTicker = null;
-    let authConfig = { google_client_id: null, google_oauth_enabled: false };
+    let authConfig = { google_client_id: null, google_oauth_enabled: false, admin_seed_enabled: false };
 
-    function authHeaders() {
-      return authToken ? { "Authorization": `Bearer ${authToken}` } : {};
+    function escapeHtml(val) {
+      return String(val ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
     }
 
     function switchTab(tabName) {
@@ -632,9 +636,10 @@
     function renderAuthHeader() {
       const container = document.getElementById("auth-container");
       if (currentUser) {
+        const displayName = escapeHtml(currentUser.name || currentUser.email);
         container.innerHTML = `
           <div class="user-pill">
-            <span>${currentUser.name || currentUser.email}</span>
+            <span>${displayName}</span>
             <button class="secondary" style="padding:4px 10px; font-size:0.78rem;" onclick="signOut()">Sign Out</button>
           </div>
         `;
@@ -672,8 +677,6 @@
         return;
       }
       const data = await resp.json();
-      authToken = data.token;
-      localStorage.setItem("dager_auth_token", authToken);
       currentUser = data.user;
       favoriteTickers = new Set(data.favorites || []);
       renderAuthHeader();
@@ -686,6 +689,7 @@
     async function handleGoogleCredentialResponse(response) {
       const resp = await fetch("/api/auth/google", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ credential: response.credential }),
       });
@@ -698,6 +702,7 @@
       if (!email) return;
       const resp = await fetch("/api/auth/google", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, name }),
       });
@@ -705,10 +710,11 @@
     }
 
     async function signOut() {
-      authToken = null;
+      try {
+        await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+      } catch (e) { /* Ignore logout network error */ }
       currentUser = null;
       favoriteTickers = new Set();
-      localStorage.removeItem("dager_auth_token");
       renderAuthHeader();
       updateReportFavButton();
       document.getElementById("status-banner").textContent = "Signed out. S&P 500 leaderboard remains public.";
@@ -717,23 +723,26 @@
 
     async function initAuth() {
       try {
-        const cfgResp = await fetch("/api/auth/config");
+        const cfgResp = await fetch("/api/auth/config", { credentials: "same-origin" });
         if (cfgResp.ok) authConfig = await cfgResp.json();
       } catch (e) { /* Ignore config fetch errors */ }
 
-      if (authToken) {
-        try {
-          const meResp = await fetch("/api/auth/me", { headers: authHeaders() });
-          if (meResp.ok) {
-            const me = await meResp.json();
-            currentUser = me.user;
-            favoriteTickers = new Set(me.favorites || []);
-          } else {
-            authToken = null;
-            localStorage.removeItem("dager_auth_token");
-          }
-        } catch (e) { /* Ignore network failure during boot */ }
+      const syncBtn = document.getElementById("sync-full-btn");
+      if (syncBtn) {
+        syncBtn.classList.toggle("hidden", authConfig.admin_seed_enabled === false);
       }
+
+      try {
+        const meResp = await fetch("/api/auth/me", { credentials: "same-origin" });
+        if (meResp.ok) {
+          const me = await meResp.json();
+          currentUser = me.user;
+          favoriteTickers = new Set(me.favorites || []);
+        } else {
+          currentUser = null;
+          favoriteTickers = new Set();
+        }
+      } catch (e) { /* Ignore network failure during boot */ }
       renderAuthHeader();
     }
 
@@ -748,7 +757,7 @@
     async function toggleFavorite(ticker) {
       if (!ticker) return;
       const banner = document.getElementById("status-banner");
-      if (!authToken) {
+      if (!currentUser) {
         banner.textContent = "Sign in with Google to favorite tickers and track them in your watchlist.";
         openSignInModal();
         return;
@@ -756,7 +765,7 @@
       try {
         const resp = await fetch(`/api/user/favorites/${encodeURIComponent(ticker)}`, {
           method: "POST",
-          headers: authHeaders(),
+          credentials: "same-origin",
         });
         if (!resp.ok) {
           const err = await resp.json();
@@ -797,29 +806,51 @@
       }
       tbodyEl.innerHTML = rows.map(r => {
         const hs = r.horizon_signals || {};
-        const cell = (k) => hs[k] ? `<span class="badge ${verdictClass(hs[k].verdict)}">${hs[k].verdict}</span>` : "-";
+        const cell = (k) => hs[k]
+          ? `<span class="badge ${verdictClass(hs[k].verdict)}">${escapeHtml(hs[k].verdict)}</span>`
+          : "-";
         const isFav = favoriteTickers.has(r.ticker);
+        const safeTicker = escapeHtml(r.ticker);
+        const safeName = escapeHtml(r.company_name);
+        const safeVerdict = escapeHtml(r.verdict);
         return `
-          <tr class="clickable" onclick="runEvaluation(false, '${r.ticker}')">
+          <tr class="clickable" data-ticker="${safeTicker}">
             <td>
               <button class="fav-star ${isFav ? 'active' : ''}"
-                title="${isFav ? 'Unfavorite ticker' : 'Favorite ticker'}"
-                onclick="event.stopPropagation(); toggleFavorite('${r.ticker}')">${isFav ? '&#9733;' : '&#9734;'}</button>
+                data-fav-ticker="${safeTicker}"
+                title="${isFav ? 'Unfavorite ticker' : 'Favorite ticker'}">${isFav ? '&#9733;' : '&#9734;'}</button>
             </td>
-            <td><strong>${r.ticker}</strong></td>
-            <td>${r.company_name}</td>
-            <td><span class="badge ${verdictClass(r.verdict)}">${r.verdict}</span></td>
-            <td><strong>${r.composite_score.toFixed(1)}</strong></td>
+            <td><strong>${safeTicker}</strong></td>
+            <td>${safeName}</td>
+            <td><span class="badge ${verdictClass(r.verdict)}">${safeVerdict}</span></td>
+            <td><strong>${Number(r.composite_score).toFixed(1)}</strong></td>
             <td>${cell("1m")}</td>
             <td>${cell("3m")}</td>
             <td>${cell("6m")}</td>
             <td>${cell("1y")}</td>
             <td>${cell("3y")}</td>
             <td>${cell("5y")}</td>
-            <td>${r.fundamentals.balance_sheet_score.toFixed(1)}</td>
+            <td>${Number(r.fundamentals.balance_sheet_score).toFixed(1)}</td>
           </tr>
         `;
       }).join("");
+    }
+
+    function bindTableDelegation(tbodyId) {
+      const tbody = document.getElementById(tbodyId);
+      if (!tbody) return;
+      tbody.addEventListener("click", (e) => {
+        const favBtn = e.target.closest("[data-fav-ticker]");
+        if (favBtn) {
+          e.stopPropagation();
+          toggleFavorite(favBtn.getAttribute("data-fav-ticker"));
+          return;
+        }
+        const row = e.target.closest("tr[data-ticker]");
+        if (row) {
+          runEvaluation(false, row.getAttribute("data-ticker"));
+        }
+      });
     }
 
     // =========================================================================
@@ -841,7 +872,7 @@
       try {
         const resp = await fetch(
           `/api/evaluate/${encodeURIComponent(query)}?force_refresh=${forceRefresh}`,
-          { headers: authHeaders() }
+          { credentials: "same-origin" }
         );
         if (!resp.ok) {
           const err = await resp.json();
@@ -873,7 +904,7 @@
       const vBadge = document.getElementById("rep-verdict");
       vBadge.textContent = `${rep.verdict} (1m–5y)`;
       vBadge.className = `badge ${verdictClass(rep.verdict)}`;
-      document.getElementById("rep-score").textContent = `${rep.composite_score.toFixed(1)} / 100`;
+      document.getElementById("rep-score").textContent = `${Number(rep.composite_score).toFixed(1)} / 100`;
       document.getElementById("rep-summary").textContent = rep.thesis_summary;
 
       // Render 1m, 3m, 6m, 1y, 3y, 5y Horizon Cards
@@ -888,11 +919,11 @@
         card.className = "horizon-card";
         card.innerHTML = `
           <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span class="h-label">${hNames[hKey]} (${hKey})</span>
-            <span class="badge ${verdictClass(sig.verdict)}">${sig.verdict}</span>
+            <span class="h-label">${escapeHtml(hNames[hKey])} (${escapeHtml(hKey)})</span>
+            <span class="badge ${verdictClass(sig.verdict)}">${escapeHtml(sig.verdict)}</span>
           </div>
-          <div class="h-score">${sig.score.toFixed(1)}<span style="font-size:0.85rem; color:var(--muted);">/100</span></div>
-          <div class="h-desc">${sig.driver_summary}</div>
+          <div class="h-score">${Number(sig.score).toFixed(1)}<span style="font-size:0.85rem; color:var(--muted);">/100</span></div>
+          <div class="h-desc">${escapeHtml(sig.driver_summary)}</div>
           <div class="h-weights">Weights: ${Math.round(sig.fundamentals_weight * 100)}% Fund · ${Math.round(sig.valuation_weight * 100)}% Val · ${Math.round(sig.sentiment_momentum_weight * 100)}% Sent/Mom</div>
         `;
         hGrid.appendChild(card);
@@ -926,9 +957,18 @@
         <div class="metric-item"><span>FinBERT Sentiment Score</span><strong>${fmtNum(rep.sentiment_score, " / 100", 1)}</strong></div>
       `;
 
-      // Render Bull & Bear lists
-      document.getElementById("bull-list").innerHTML = (rep.bull_case || []).map(i => `<li>${i}</li>`).join("");
-      document.getElementById("bear-list").innerHTML = (rep.bear_case || []).map(i => `<li>${i}</li>`).join("");
+      // Render Bull & Bear lists via textContent (prevents XSS from external news headlines)
+      const renderTextList = (elId, items) => {
+        const ul = document.getElementById(elId);
+        ul.innerHTML = "";
+        (items || []).forEach(text => {
+          const li = document.createElement("li");
+          li.textContent = text;
+          ul.appendChild(li);
+        });
+      };
+      renderTextList("bull-list", rep.bull_case);
+      renderTextList("bear-list", rep.bear_case);
     }
 
     // =========================================================================
@@ -949,18 +989,18 @@
           `No S&amp;P 500 evaluations cached yet. Background sync is populating or click "Sync Full S&amp;P 500 Now".`
         );
       } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="12">Failed to load S&amp;P 500 leaderboard: ${e}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="12">Failed to load S&amp;P 500 leaderboard: ${escapeHtml(String(e))}</td></tr>`;
       }
     }
 
     async function loadRecentSearches() {
       const tbody = document.getElementById("recent-searches-body");
-      if (!authToken) {
+      if (!currentUser) {
         tbody.innerHTML = `<tr><td colspan="12" style="color:var(--muted);">Sign in with Google above to save and view your personal ticker search history.</td></tr>`;
         return;
       }
       try {
-        const resp = await fetch("/api/user/recent", { headers: authHeaders() });
+        const resp = await fetch("/api/user/recent", { credentials: "same-origin" });
         if (!resp.ok) {
           tbody.innerHTML = `<tr><td colspan="12" style="color:var(--muted);">Sign in with Google above to view your personal ticker history.</td></tr>`;
           return;
@@ -972,18 +1012,18 @@
           `No recent searches yet for this account. Enter a ticker or company name above.`
         );
       } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="12">Failed to load recent searches: ${e}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="12">Failed to load recent searches: ${escapeHtml(String(e))}</td></tr>`;
       }
     }
 
     async function loadFavorites() {
       const tbody = document.getElementById("favorites-body");
-      if (!authToken) {
+      if (!currentUser) {
         tbody.innerHTML = `<tr><td colspan="12" style="color:var(--muted);">Sign in with Google above to favorite and track tickers across sessions.</td></tr>`;
         return;
       }
       try {
-        const resp = await fetch("/api/user/favorites", { headers: authHeaders() });
+        const resp = await fetch("/api/user/favorites", { credentials: "same-origin" });
         if (!resp.ok) {
           tbody.innerHTML = `<tr><td colspan="12" style="color:var(--muted);">Sign in with Google above to view favorited tickers.</td></tr>`;
           return;
@@ -995,7 +1035,7 @@
           `No favorited tickers yet. Click the &#9734; star on any searched or recent stock to track it here.`
         );
       } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="12">Failed to load favorited tickers: ${e}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="12">Failed to load favorited tickers: ${escapeHtml(String(e))}</td></tr>`;
       }
     }
 
@@ -1037,7 +1077,10 @@
       switchTab("sp500");
       banner.textContent = "Starting continuous background S&P 500 daily sync (resuming any uncached tickers)...";
       try {
-        const resp = await fetch("/api/sp500/seed?limit=500&background=true", { method: "POST" });
+        const resp = await fetch("/api/sp500/seed?limit=500&background=true", {
+          method: "POST",
+          credentials: "same-origin",
+        });
         if (!resp.ok) {
           const err = await resp.json();
           banner.textContent = `Full S&P 500 sync failed to start: ${err.detail || resp.statusText}`;
@@ -1053,6 +1096,9 @@
     document.getElementById("query-input").addEventListener("keydown", (e) => {
       if (e.key === "Enter") runEvaluation(false);
     });
+    bindTableDelegation("leaderboard-body");
+    bindTableDelegation("recent-searches-body");
+    bindTableDelegation("favorites-body");
 
     (async () => {
       await initAuth();

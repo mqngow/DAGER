@@ -3,7 +3,7 @@
 import logging
 from contextlib import contextmanager
 from typing import Generator, Optional
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, inspect
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from dager.config import settings
@@ -42,20 +42,27 @@ def _normalize_db_url(raw_url: str) -> str:
     return url
 
 
+def _build_connect_args(url: str) -> dict:
+    """Build SQLAlchemy `connect_args` enforcing SQLite thread safety and Postgres TLS."""
+    if url.startswith("sqlite"):
+        return {"check_same_thread": False}
+    if url.startswith("postgresql") and settings.db_require_ssl and "sslmode=" not in url.lower():
+        return {"sslmode": "require"}
+    return {}
+
+
 def get_engine(database_url: Optional[str] = None) -> Engine:
     """Create or return the singleton SQLAlchemy Engine for the configured database URI."""
     global _engine
     url = _normalize_db_url(database_url or settings.database_url)
 
     if database_url is not None:
-        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-        return create_engine(url, connect_args=connect_args, future=True)
+        return create_engine(url, connect_args=_build_connect_args(url), future=True)
 
     if _engine is None:
-        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
         _engine = create_engine(
             url,
-            connect_args=connect_args,
+            connect_args=_build_connect_args(url),
             pool_pre_ping=True,
             future=True,
         )
@@ -84,11 +91,15 @@ def get_session_factory(engine: Optional[Engine] = None) -> sessionmaker[Session
 # commit/rollback lifecycles for repositories, Prefect tasks, and FastAPI routes.
 # ==============================================================================
 def init_db(engine: Optional[Engine] = None) -> None:
-    """Create all registered ORM tables in the target database if they do not exist."""
-    # Import models so metadata is populated before `create_all`
+    """Create all registered ORM tables if missing (no-op for least-privilege runtime roles)."""
+    # Import models so metadata is populated before checking/creating tables
     import dager.storage.models  # noqa: F401
 
     target_engine = engine or get_engine()
+    existing_tables = set(inspect(target_engine).get_table_names())
+    required_tables = set(Base.metadata.tables.keys())
+    if required_tables.issubset(existing_tables):
+        return
     Base.metadata.create_all(bind=target_engine)
 
 

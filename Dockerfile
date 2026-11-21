@@ -15,16 +15,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HF_HOME=/tmp/.cache/huggingface
 
 # ==============================================================================
-# Dependency Installation
-# Copies package files and installs DAGER + runtime dependencies.
+# Dependency Installation & Non-Root User Setup
+# Installs pinned dependencies from `requirements.txt`, creates an unprivileged
+# `appuser` account, and removes overly permissive `777` directory rights.
 # ==============================================================================
-COPY pyproject.toml README.md main.py ./
+COPY pyproject.toml README.md main.py requirements.txt ./
 COPY dager ./dager
 COPY flows ./flows
 
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e . && \
-    mkdir -p /app/logs && chmod -R 777 /app/logs
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir --no-deps -e . && \
+    addgroup --system appuser && \
+    adduser --system --ingroup appuser appuser && \
+    mkdir -p /app/logs && \
+    chown -R appuser:appuser /app
+
+USER appuser
 
 # ==============================================================================
 # Default Web Entrypoint
