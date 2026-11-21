@@ -4,8 +4,9 @@
 -- (`postgres`) AFTER DAGER's tables have been initialized.
 --
 -- What this script enforces:
--- 1. Enables Row Level Security (RLS) on all 7 tables in `public` with no
---    permissive policies, blocking direct PostgREST Data API reads/writes.
+-- 1. Enables Row Level Security (RLS) on all 7 tables in `public` with explicit
+--    policies allowing ONLY `dager_web_app` (and `dager_pipeline` on market
+--    tables), blocking all Supabase Data API (`anon`/`authenticated`) access.
 -- 2. Revokes all privileges from `anon` and `authenticated` roles.
 -- 3. Creates two least-privilege login roles so Cloud Run and GitHub Actions
 --    never connect as the `postgres` owner/superuser:
@@ -79,11 +80,48 @@ GRANT USAGE, SELECT ON SEQUENCE
     public.evaluation_results_id_seq
 TO dager_pipeline;
 
--- 5. Verification Queries
+-- 5. Explicit RLS Policies for Backend Roles Only (Clears `rls_enabled_no_policy`)
+-- Grants row-level access ONLY to `dager_web_app` (all 7 tables) and
+-- `dager_pipeline` (5 market tables only). `anon` and `authenticated` remain
+-- completely denied with zero Data API policies.
+DROP POLICY IF EXISTS backend_market_access ON public.companies;
+CREATE POLICY backend_market_access ON public.companies
+    FOR ALL TO dager_web_app, dager_pipeline USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS backend_market_access ON public.financial_statements;
+CREATE POLICY backend_market_access ON public.financial_statements
+    FOR ALL TO dager_web_app, dager_pipeline USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS backend_market_access ON public.stock_prices;
+CREATE POLICY backend_market_access ON public.stock_prices
+    FOR ALL TO dager_web_app, dager_pipeline USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS backend_market_access ON public.sentiment_records;
+CREATE POLICY backend_market_access ON public.sentiment_records
+    FOR ALL TO dager_web_app, dager_pipeline USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS backend_market_access ON public.evaluation_results;
+CREATE POLICY backend_market_access ON public.evaluation_results
+    FOR ALL TO dager_web_app, dager_pipeline USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS web_app_user_access ON public.users;
+CREATE POLICY web_app_user_access ON public.users
+    FOR ALL TO dager_web_app USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS web_app_user_access ON public.user_tickers;
+CREATE POLICY web_app_user_access ON public.user_tickers
+    FOR ALL TO dager_web_app USING (true) WITH CHECK (true);
+
+-- 6. Verification Queries
 SELECT schemaname, tablename, rowsecurity
 FROM pg_tables
 WHERE schemaname = 'public'
 ORDER BY tablename;
+
+SELECT tablename, policyname, roles, cmd
+FROM pg_policies
+WHERE schemaname = 'public'
+ORDER BY tablename, policyname;
 
 SELECT grantee, table_name, privilege_type
 FROM information_schema.role_table_grants
